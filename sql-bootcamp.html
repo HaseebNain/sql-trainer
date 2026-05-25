@@ -588,6 +588,67 @@
     flex-shrink: 0;
   }
 
+  .saved-query-panel {
+    border-top: 1px solid var(--border);
+    background: var(--bg3);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .saved-query-panel.hidden {
+    display: none;
+  }
+  .saved-query-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+  .saved-query-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .saved-query-item {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .saved-query-item:hover {
+    border-color: var(--accent);
+    background: rgba(108,138,255,0.08);
+  }
+  .saved-query-item p {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    margin: 4px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .saved-query-context {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 6px;
+  }
+  .saved-query-item time {
+    font-size: 10px;
+    color: var(--text3);
+  }
+  .saved-query-empty {
+    font-size: 12px;
+    color: var(--text3);
+  }
+
   .api-key-bar {
     display: flex;
     align-items: center;
@@ -676,6 +737,7 @@
         <div class="schema-pills" id="schema-pills"></div>
         <div class="editor-buttons">
           <button class="hint-btn" onclick="showHint()">💡 Hint</button>
+          <button class="btn btn-ghost" onclick="toggleQueryHistory()">Saved Queries</button>
           <button class="btn btn-ghost" onclick="resetQuery()">Reset</button>
           <button class="btn btn-primary" onclick="runQuery()">▶ Run Query</button>
         </div>
@@ -696,6 +758,16 @@
           </div>
           <div class="output-content" id="output-content"></div>
           <div id="row-count" class="row-count" style="display:none"></div>
+          <div class="saved-query-panel hidden" id="saved-query-panel">
+            <div class="saved-query-header">
+              <span>Saved query history</span>
+              <span>
+                <span id="saved-query-count">0</span> entries
+                <button class="btn btn-ghost" onclick="clearQueryHistory()">Clear</button>
+              </span>
+            </div>
+            <div class="saved-query-list" id="saved-query-list"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1865,8 +1937,112 @@ let lastResults = null;
 let editor = null;
 let currentExercise = null;
 let completedExercises = new Set();
+let queryHistory = [];
 
 const PROGRESS_KEY = 'sql_bootcamp_progress';
+const QUERY_HISTORY_KEY = 'sql_bootcamp_query_history';
+
+function loadQueryHistory() {
+  try {
+    const data = JSON.parse(localStorage.getItem(QUERY_HISTORY_KEY) || 'null');
+    queryHistory = Array.isArray(data) ? data : [];
+  } catch {
+    queryHistory = [];
+  }
+  renderQueryHistory();
+}
+
+function saveQueryHistory() {
+  localStorage.setItem(QUERY_HISTORY_KEY, JSON.stringify(queryHistory));
+}
+
+function getQueryContext() {
+  if (currentExercise && currentLesson) {
+    return {
+      label: `Exercise — ${currentLesson.title}`,
+      detail: currentExercise.prompt || `Exercise ${currentExercise.id}`
+    };
+  }
+  if (currentLesson) {
+    return {
+      label: `Lesson — ${currentLesson.title}`,
+      detail: currentLesson.task || `Lesson ${currentLesson.id}`
+    };
+  }
+  return { label: 'General SQL', detail: '' };
+}
+
+function addQueryToHistory(sql) {
+  const trimmed = sql.trim();
+  if (!trimmed) return;
+  const context = getQueryContext();
+  queryHistory.unshift({
+    sql: trimmed,
+    timestamp: new Date().toISOString(),
+    lessonId: currentLesson?.id || null,
+    lessonTitle: currentLesson?.title || null,
+    exerciseId: currentExercise?.id || null,
+    exercisePrompt: currentExercise?.prompt || null,
+    contextLabel: context.label,
+    contextDetail: context.detail
+  });
+  queryHistory = queryHistory.slice(0, 50);
+  saveQueryHistory();
+  renderQueryHistory();
+}
+
+function renderQueryHistory() {
+  const list = document.getElementById('saved-query-list');
+  const count = document.getElementById('saved-query-count');
+  if (!list || !count) return;
+  list.innerHTML = '';
+  count.textContent = `${queryHistory.length}`;
+  if (queryHistory.length === 0) {
+    list.innerHTML = '<div class="saved-query-empty">No saved queries yet. Run a query to save it here.</div>';
+    return;
+  }
+  queryHistory.forEach((entry, index) => {
+    const item = document.createElement('div');
+    item.className = 'saved-query-item';
+    item.onclick = () => {
+      editor.setValue(entry.sql);
+      editor.focus();
+      showFeedback('info', 'Loaded Query', 'Query loaded into the editor.');
+    };
+    const date = new Date(entry.timestamp);
+    const when = isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString();
+    const contextLabel = entry.contextLabel || (entry.exercisePrompt ? 'Exercise Query' : 'Lesson Query');
+    const contextDetail = entry.contextDetail || entry.exercisePrompt || entry.lessonTitle || '';
+    item.innerHTML = `
+      <div class="saved-query-context"><strong>${escapeHtml(contextLabel)}</strong>${contextDetail ? ` — ${escapeHtml(contextDetail)}` : ''}</div>
+      <p>${escapeHtml(entry.sql)}</p>
+      <time>${when}</time>
+    `;
+    list.appendChild(item);
+  });
+}
+
+function toggleQueryHistory() {
+  const panel = document.getElementById('saved-query-panel');
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+}
+
+function clearQueryHistory() {
+  if (!confirm('Clear all saved queries?')) return;
+  queryHistory = [];
+  saveQueryHistory();
+  renderQueryHistory();
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function saveProgress() {
   localStorage.setItem(PROGRESS_KEY, JSON.stringify({
@@ -2100,6 +2276,7 @@ async function initDB() {
   const savedLessonId = loadProgress();
   initEditor();
   initResize();
+  loadQueryHistory();
   buildUI();
   document.getElementById('xp-display').textContent = `⚡ ${xp} XP`;
   const allLessons = curriculum.flatMap(d => d.lessons);
@@ -2193,6 +2370,7 @@ function runQuery() {
   if (!sql) return;
   try {
     const results = db.exec(sql);
+    addQueryToHistory(sql);
     if (results.length === 0) {
       showFeedback('info', 'Success', 'Query ran successfully but returned no rows.');
       return;
