@@ -180,11 +180,26 @@
   .lesson-panel {
     padding: 24px 28px 16px;
     border-bottom: 1px solid var(--border);
-    max-height: 38%;
+    height: 160px;
+    min-height: 120px;
+    max-height: 70vh;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
     flex-shrink: 0;
+  }
+  .vertical-resize-handle {
+    height: 6px;
+    background: var(--border);
+    cursor: row-resize;
+    flex-shrink: 0;
+    transition: background 0.15s;
+    width: 100%;
+    position: relative;
+  }
+  .vertical-resize-handle:hover,
+  .vertical-resize-handle.dragging {
+    background: var(--accent);
   }
   .lesson-breadcrumb {
     font-size: 11px;
@@ -732,6 +747,7 @@
   <div class="sidebar" id="sidebar"></div>
   <div class="content">
     <div class="lesson-panel" id="lesson-panel"></div>
+    <div class="vertical-resize-handle" id="vertical-resize-handle"></div>
     <div class="editor-area">
       <div class="editor-header">
         <div class="schema-pills" id="schema-pills"></div>
@@ -2242,6 +2258,39 @@ function initResize() {
   });
 }
 
+function initVerticalResize() {
+  const handle = document.getElementById('vertical-resize-handle');
+  const panel  = document.getElementById('lesson-panel');
+
+  const savedHeight = localStorage.getItem('sql_bootcamp_lesson_height');
+  if (savedHeight) panel.style.height = savedHeight + 'px';
+
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = panel.offsetHeight;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const delta = e.clientY - startY;
+      const newH = Math.max(120, Math.min(window.innerHeight * 0.6, startH + delta));
+      panel.style.height = newH + 'px';
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('sql_bootcamp_lesson_height', panel.offsetHeight);
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
 function initEditor() {
   editor = CodeMirror(document.getElementById('sql-editor-wrap'), {
     mode: 'text/x-sql',
@@ -2276,6 +2325,7 @@ async function initDB() {
   const savedLessonId = loadProgress();
   initEditor();
   initResize();
+  initVerticalResize();
   loadQueryHistory();
   buildUI();
   document.getElementById('xp-display').textContent = `⚡ ${xp} XP`;
