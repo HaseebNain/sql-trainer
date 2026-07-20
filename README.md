@@ -1,41 +1,63 @@
-# SQL Bootcamp Trainer
+# SQL Quest — Zero to Data Engineer
 
-This repository contains a simple SQL learning/training project built around a single HTML file, `sql-bootcamp.html`.
+A gamified, fully interactive SQL course that runs entirely in your browser — **and entirely offline**. Open `index.html` and go from your first `SELECT` to interview-ready Analytics/Data Engineer skills over 28 days. No installs, no accounts, no backend, no network: queries run against a real in-browser SQLite database (sql.js/WASM, bundled locally).
 
-## Project Overview
+## Quick Start
 
-`sql-bootcamp.html` is designed to provide an interactive or educational experience for learning SQL concepts. The file can be opened in a browser for review and presentation.
+1. Clone or download this folder.
+2. Open `index.html` in any modern browser (double-clicking the file works — the app is built to run from `file://`).
+3. Read the lesson, write the query, hit **Run** (or `Ctrl/Cmd + Enter`).
 
-## Contents
+Progress, XP, streaks, and achievements persist in `localStorage`.
 
-- `sql-bootcamp.html` - Main training content for the SQL bootcamp.
+## The Course
 
-## How to Use
+28 days, 100 lessons, 180+ XP-earning practice exercises:
 
-1. Clone the repository or download the files.
-2. Open `sql-bootcamp.html` in a modern web browser.
-3. Review the SQL lessons, examples, and exercises contained in the file.
+| Days | Track |
+|------|-------|
+| 1–2 | Core querying (SELECT, WHERE, ORDER BY) |
+| 3, 13 | Aggregation & grouping |
+| 4, 11, 12 | Joins, self-joins, set operations |
+| 5, 15 | Subqueries, CTEs, recursion |
+| 6, 14 | Window functions |
+| 8–10, 16 | NULLs, strings, dates, data cleaning |
+| 7, 17–21 | Pivots, cohorts, funnels, RFM, KPIs, analytics capstone |
+| **22** | **DDL, constraints, transactions & upserts** |
+| **23–24** | **Views, dbt-style layered models, star schemas (facts & dims, grain, SCD)** |
+| **25** | **Indexes, EXPLAIN QUERY PLAN, sargable predicates** |
+| **26–27** | **Incremental loads, idempotent ELT, dbt-style data quality tests** |
+| **28** | **The Interview Gauntlet — top-N per group, Nth-highest, group-average classics** |
 
-## Suggested Workflow
+Days 1–21 cover what a junior SQL screen tests. The Data Engineer track (days 22–28) covers what the *job* actually is: modeling, pipelines, performance, and testing.
 
-- Use this repository as a starting point for building SQL training materials.
-- Add new examples, exercises, or interactive elements directly into `sql-bootcamp.html`.
-- Consider splitting content into multiple files if the training material grows.
+## The App
+
+- **Fully offline** — CodeMirror and sql.js are vendored in `vendor/`; the SQLite WASM binary is embedded as base64 so it loads even from `file://`. The Google Fonts link is a progressive enhancement only.
+- **Course Map** (`Ctrl+K`) — jump to any day; collapsible per-day sidebar with live progress.
+- **Light & dark themes**, keyboard shortcuts (`Ctrl+/` for the list), CSV export of any result set, per-query timing, and a **↺ Reset data** button that rebuilds the practice database after your DDL/DML experiments.
+- **Gamification** — XP with 15 levels (*Row Rookie* → *Principal Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 26 achievements 🏆.
+- **Data Engineer Readiness report** 📈 — click your level badge for per-skill progress mapped to real job requirements.
+- **AI Tutor** (optional) — paste an Anthropic API key in the AI Tutor tab for a lesson-aware tutor. The key stays in your browser.
+
+## Project Structure
+
+| Path | What it is |
+|------|------------|
+| `index.html` | App shell and markup |
+| `styles.css` | Design system — tokens, light/dark themes, all components |
+| `data.js` | The curriculum (lessons, exercises, validations) and sample database |
+| `app.js` | Engine — SQL runner, validation, gamification, navigation |
+| `vendor/` | CodeMirror + sql.js, vendored for offline use |
+| `tools/verify.js` | Node harness that seeds the DB and validates every lesson & exercise |
+| `tools/check-wiring.js` | Static check that markup handlers/ids match the engine |
 
 ## Contributing
 
-Contributions are welcome. Typical improvements include:
+Add lessons in the `curriculum` array in `data.js` (sample data lives in `schemas` in the same file; gamification config in `LEVELS` / `ACHIEVEMENTS` / `SKILL_TRACKS` in `app.js`). Give each new exercise a `_ref` field containing a reference solution, then run:
 
-- Adding more SQL topics and examples.
-- Improving formatting and readability.
-- Adding real database examples and sample data.
-- Including solution walkthroughs for exercises.
+```
+node tools/verify.js
+```
 
-## Notes
-
-- This repository currently includes only a single file for the SQL training content.
-- If you want to expand this into a full learning site, adding CSS, JavaScript, and additional HTML pages is recommended.
-
-## License
-
-This repository does not include a specified license. Add a license file if you want to clearly define reuse permissions.
+The harness executes every starter and reference solution against the seeded database and fails if any validation doesn't hold — so exercise row counts can never drift from the data.

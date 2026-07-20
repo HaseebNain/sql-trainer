@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Quest — Zero to Data Engineer</title>
+<!-- Everything below is local: the app is fully offline-capable. The Google
+     Fonts link is a progressive enhancement — system fonts take over offline. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/codemirror.min.css">
+<link rel="stylesheet" href="vendor/show-hint.min.css">
+<link rel="stylesheet" href="styles.css">
+<script>
+  // Apply the saved theme before first paint to avoid a flash.
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('sql_bootcamp_theme'); } catch (e) {}
+    if (t === 'light') document.documentElement.dataset.theme = 'light';
+  })();
+</script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon">SQL</div>
+    <div class="logo-text">
+      SQL Quest
+      <span class="logo-sub">Zero → Data Engineer</span>
+    </div>
+  </div>
+
+  <div class="day-nav">
+    <button class="nav-chev" id="prev-day-btn" onclick="stepDay(-1)" title="Previous day">‹</button>
+    <button class="map-btn" id="map-btn" onclick="openCourseMap()" title="Course map — jump to any day">
+      <span id="map-btn-label">Course Map</span>
+      <span class="map-day-pct" id="map-btn-pct"></span>
+      <span class="map-caret">▼</span>
+    </button>
+    <button class="nav-chev" id="next-day-btn" onclick="stepDay(1)" title="Next day">›</button>
+  </div>
+
+  <div class="topbar-right">
+    <button class="daily-btn" id="daily-btn" onclick="startDailyChallenge()" title="One challenge a day. Double XP. Keeps your streak alive.">🎯 Daily ×2</button>
+    <div class="streak-pill" id="streak-pill" title="Daily streak — complete anything once a day to keep it burning">🔥 0</div>
+    <div class="level-widget" onclick="openCareerModal()" title="Click to see your Data Engineer readiness">
+      <div class="level-badge" id="level-badge">1</div>
+      <div class="level-info">
+        <div class="level-title" id="level-title">Row Rookie</div>
+        <div class="level-bar"><div class="level-bar-fill" id="level-bar-fill" style="width:0%"></div></div>
+      </div>
+      <div class="level-xp" id="xp-display">⚡ 0</div>
+    </div>
+    <button class="btn btn-ghost icon-btn" onclick="openAchievements()" title="Achievements">🏆</button>
+    <button class="btn btn-ghost icon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light / dark theme">☀️</button>
+    <button class="btn btn-ghost icon-btn" id="sound-btn" onclick="toggleSound()" title="Toggle sound">🔊</button>
+    <button class="btn btn-ghost icon-btn" onclick="openShortcuts()" title="Keyboard shortcuts">⌨</button>
+    <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="resetProgress()">Reset</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-header-title">
+        <span>Curriculum</span>
+        <span id="sidebar-progress-count">0%</span>
+      </div>
+      <div class="sidebar-progress"><div class="sidebar-progress-fill" id="sidebar-progress-fill" style="width:0%"></div></div>
+    </div>
+    <div class="sidebar-scroll" id="sidebar"></div>
+  </div>
+
+  <div class="content">
+    <div class="lesson-panel" id="lesson-panel"></div>
+    <div class="vertical-resize-handle" id="vertical-resize-handle"></div>
+    <div class="editor-area">
+      <div class="editor-header">
+        <div class="schema-pills-wrap" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <div class="schema-pills" id="schema-pills"></div>
+          <button class="reseed-btn" onclick="reseedDatabase()" title="Rebuild the practice database from scratch — undoes any INSERT/UPDATE/DELETE/DROP you've run">↺ Reset data</button>
+        </div>
+        <div class="editor-buttons">
+          <div class="combo-ind" id="combo-ind"></div>
+          <button class="hint-btn" onclick="showHint()">💡 Hint</button>
+          <button class="btn btn-ghost" onclick="toggleQueryHistory()">Saved Queries</button>
+          <button class="btn btn-ghost" onclick="resetQuery()">Reset</button>
+          <button class="btn btn-primary" onclick="runQuery()" title="Ctrl/Cmd + Enter">▶ Run Query</button>
+        </div>
+      </div>
+      <div class="exercise-bar" id="exercise-bar" style="display:none">
+        <span class="exercise-bar-label">Exercise</span>
+        <span class="exercise-bar-text" id="exercise-bar-text"></span>
+        <button class="exercise-clear" onclick="clearExercise()">✕ Back</button>
+      </div>
+      <div class="editor-body">
+        <div class="sql-editor-wrap" id="sql-editor-wrap"></div>
+        <div class="resize-handle" id="resize-handle"></div>
+        <div class="output-panel" id="output-panel">
+          <div class="output-tabs">
+            <button class="output-tab active" onclick="switchTab('results',this)">Results</button>
+            <button class="output-tab" onclick="switchTab('schema',this)">Schema</button>
+            <button class="output-tab" onclick="switchTab('ai',this)">AI Tutor</button>
+          </div>
+          <div class="output-content" id="output-content"></div>
+          <div id="row-count" class="row-count" style="display:none">
+            <span id="row-count-text"></span>
+            <button class="export-btn" onclick="exportCSV()" title="Download the current results as a CSV file">⬇ CSV</button>
+          </div>
+          <div class="saved-query-panel hidden" id="saved-query-panel">
+            <div class="saved-query-header">
+              <span>Saved query history</span>
+              <span>
+                <span id="saved-query-count">0</span> entries
+                <button class="btn btn-ghost" onclick="clearQueryHistory()">Clear</button>
+                <button class="btn btn-ghost" onclick="toggleQueryHistory()">Close</button>
+              </span>
+            </div>
+            <div class="saved-query-list" id="saved-query-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<canvas id="confetti-canvas"></canvas>
+<div id="toast-stack"></div>
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal" id="modal-box"></div>
+</div>
+<div class="levelup-overlay hidden" id="levelup-overlay">
+  <div class="levelup-card" id="levelup-card"></div>
+</div>
+
+<script src="vendor/codemirror.min.js"></script>
+<script src="vendor/sql-mode.min.js"></script>
+<script src="vendor/show-hint.min.js"></script>
+<script src="vendor/sql-hint.min.js"></script>
+<script src="vendor/sql-wasm.js"></script>
+<script src="vendor/sql-wasm-b64.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
