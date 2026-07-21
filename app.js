@@ -410,6 +410,138 @@ function handleDailyCompletion(ex) {
   return bonus;
 }
 
+// ── Quiz — random self-check drawn from completed lessons/exercises ──
+let quizItems = [], quizIndex = 0, quizScore = 0, quizSolved = false;
+const QUIZ_SIZE = 5;
+
+// Everything the learner has already finished becomes fair game to be quizzed on.
+function buildQuizPool() {
+  const pool = [];
+  for (const day of curriculum) {
+    for (const l of day.lessons) {
+      if (completedLessons.has(l.id)) {
+        pool.push({ kind: 'lesson', lesson: l, day: day.day, prompt: l.task, tables: l.tables || [] });
+      }
+      for (const ex of (l.exercises || [])) {
+        if (completedExercises.has(ex.id)) {
+          pool.push({ kind: 'exercise', lesson: l, ex, day: day.day, prompt: ex.prompt, tables: l.tables || [] });
+        }
+      }
+    }
+  }
+  return pool;
+}
+
+function startQuiz() {
+  const pool = buildQuizPool();
+  if (!pool.length) {
+    openModal(`
+      <div class="modal-header"><div class="modal-title">🧠 Quiz</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-sub">A quick recall check from lessons you've already completed.</div>
+      <div class="feedback-box feedback-info"><div class="feedback-label">Nothing to quiz on yet</div>Finish at least one lesson or practice exercise, then come back to test what stuck.</div>`);
+    return;
+  }
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  quizItems = pool.slice(0, Math.min(QUIZ_SIZE, pool.length));
+  quizIndex = 0; quizScore = 0;
+  renderQuizQuestion();
+}
+
+function renderQuizQuestion() {
+  quizSolved = false;
+  const n = quizItems.length;
+  const item = quizItems[quizIndex];
+  const pct = Math.round((quizIndex / n) * 100);
+  const pills = item.tables.map(t => `<span class="schema-pill" style="cursor:default">${t}</span>`).join('');
+  openModal(`
+    <div class="modal-header">
+      <div class="modal-title">🧠 Quiz</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="quiz-meta"><span>Question ${quizIndex + 1} of ${n}</span><span>Score ${quizScore}/${quizIndex}</span></div>
+    <div class="quiz-progress-bar"><div class="quiz-progress-fill" style="width:${pct}%"></div></div>
+    <div class="quiz-origin">${item.kind === 'lesson' ? 'Lesson' : 'Exercise'} · Day ${item.day} · ${escapeHtml(item.lesson.title)}</div>
+    <div class="quiz-prompt">${item.prompt}</div>
+    ${pills ? `<div class="quiz-tables">${pills}</div>` : ''}
+    <textarea class="quiz-answer" id="quiz-answer" placeholder="Write your SQL here…" spellcheck="false" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')checkQuizAnswer()"></textarea>
+    <div id="quiz-feedback"></div>
+    <div class="quiz-actions" id="quiz-actions">
+      <button class="btn btn-primary" onclick="checkQuizAnswer()">Check answer</button>
+      <button class="btn btn-ghost" onclick="revealQuizHint()">💡 Hint</button>
+      <button class="btn btn-ghost" onclick="skipQuizQuestion()">Skip →</button>
+    </div>`);
+  setTimeout(() => { const a = document.getElementById('quiz-answer'); if (a) a.focus(); }, 50);
+}
+
+function checkQuizAnswer() {
+  if (quizSolved) return;
+  const ta = document.getElementById('quiz-answer');
+  const sql = ta ? ta.value.trim() : '';
+  if (!sql) return;
+  const item = quizItems[quizIndex];
+  let passed = false, errored = false;
+  try {
+    if (item.kind === 'lesson') {
+      passed = SqlEngine.evaluate(sql, item.lesson) === 'pass';
+    } else {
+      const res = SqlEngine.runOnFresh([sql]);   // isolated — never mutates the live DB
+      if (!res) errored = true;
+      passed = exercisePasses(item.ex, sql, res ? res.columns : [], res ? res.values : []);
+    }
+  } catch { errored = true; }
+  const fb = document.getElementById('quiz-feedback');
+  const last = quizIndex + 1 >= quizItems.length;
+  if (passed) {
+    quizSolved = true; quizScore++;
+    playSound('correct');
+    fb.innerHTML = `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct!</div>Nicely recalled.</div>`;
+    document.getElementById('quiz-actions').innerHTML =
+      `<button class="btn btn-primary" onclick="nextQuizQuestion()">${last ? 'See results →' : 'Next question →'}</button>`;
+  } else {
+    playSound('error');
+    fb.innerHTML = `<div class="feedback-box feedback-error"><div class="feedback-label">${errored ? 'SQL error' : 'Not quite'}</div>${errored ? 'That query didn’t run — check the syntax and try again.' : 'That doesn’t produce the expected result. Try again, or take a 💡 hint.'}</div>`;
+  }
+}
+
+function revealQuizHint() {
+  const item = quizItems[quizIndex];
+  const hint = item.kind === 'exercise' ? item.ex.hint : item.lesson.hint;
+  const fb = document.getElementById('quiz-feedback');
+  if (fb) fb.innerHTML = `<div class="feedback-box feedback-hint"><div class="feedback-label">💡 Hint</div>${hint || 'Reopen the lesson to refresh this one.'}</div>`;
+}
+
+function skipQuizQuestion() { nextQuizQuestion(); }
+
+function nextQuizQuestion() {
+  quizIndex++;
+  if (quizIndex >= quizItems.length) finishQuiz();
+  else renderQuizQuestion();
+}
+
+function finishQuiz() {
+  const n = quizItems.length;
+  const pct = Math.round((quizScore / n) * 100);
+  const perfect = quizScore === n;
+  const verdict =
+    perfect  ? "Flawless recall — these concepts are locked in. 🔒" :
+    pct >= 70 ? "Strong. Most of it stuck; review the ones you missed." :
+    pct >= 40 ? "Getting there. Revisit the lessons behind the misses." :
+                "Worth another pass — reopen those lessons and try again.";
+  if (perfect) burstConfetti(true); else if (pct >= 70) burstConfetti(false);
+  playSound(perfect ? 'levelup' : 'exercise');
+  openModal(`
+    <div class="modal-header"><div class="modal-title">🧠 Quiz Results</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="quiz-score-wrap">
+      <div class="quiz-score-num">${quizScore}<span>/${n}</span></div>
+      <div class="quiz-score-pct">${pct}% correct</div>
+    </div>
+    <div class="feedback-box feedback-info"><div class="feedback-label">${perfect ? '🏆 Perfect score' : 'Result'}</div>${verdict}</div>
+    <div class="quiz-actions">
+      <button class="btn btn-primary" onclick="startQuiz()">New quiz</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Done</button>
+    </div>`);
+}
+
 function loadQueryHistory() {
   try {
     const data = JSON.parse(localStorage.getItem(QUERY_HISTORY_KEY) || 'null');
@@ -586,16 +718,14 @@ function clearExercise() {
   renderExercisesList();
 }
 
-function checkExercise(sql, columns, values) {
-  if (!currentExercise) return;
-  const ex = currentExercise;
-  let passed = false;
-
+// Pure pass/fail check for an exercise given a query and its result set.
+// Shared by the lesson flow (checkExercise) and the Quiz.
+function exercisePasses(ex, sql, columns, values) {
   if (ex.validate) {
     const v = ex.validate;
     const cols = (columns || []).map(c => c.toLowerCase());
     const rows = values || [];
-    passed = true;
+    let passed = true;
 
     if (v.rowCount !== undefined && rows.length !== v.rowCount) passed = false;
     if (v.minRows  !== undefined && rows.length <  v.minRows)  passed = false;
@@ -630,14 +760,24 @@ function checkExercise(sql, columns, values) {
       const target = String(v.hasValue).toLowerCase();
       if (!rows.some(r => r.some(c => String(c ?? '').toLowerCase() === target))) passed = false;
     }
-  } else if (ex.solution) {
+    return passed;
+  }
+  if (ex.solution) {
     const clean = sql.toLowerCase().replace(/\s+/g,' ').replace(/;/g,'').trim();
-    passed = ex.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g,' ')));
+    let passed = ex.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g,' ')));
     // Also accept a query that produces the same results as a full-SELECT key.
     if (!passed) {
       try { passed = SqlEngine.matchesLesson(sql, ex); } catch { passed = false; }
     }
+    return passed;
   }
+  return false;
+}
+
+function checkExercise(sql, columns, values) {
+  if (!currentExercise) return;
+  const ex = currentExercise;
+  const passed = exercisePasses(ex, sql, columns, values);
 
   if (passed) {
     const dailyBonus = handleDailyCompletion(ex);
@@ -703,12 +843,127 @@ function apiKeyStatusHtml() {
   return '';
 }
 
-function buildHintTables() {
-  const tables = {};
-  for (const [name, schema] of Object.entries(schemas)) {
-    tables[name] = schema.cols.map(c => c.name);
+// Tables relevant to a lesson: the ones it declares PLUS any table its
+// exercises actually reference (many lessons declare only their main table but
+// have exercises that query others — e.g. lesson 1.2 is "employees" but its
+// exercises use `departments`). Matched as whole words, so the `departments`
+// TABLE is picked up while the `department` employees COLUMN is not. Cached on
+// the lesson since buildHintTables runs on every keystroke.
+function relevantTables(lesson) {
+  if (!lesson) return Object.keys(schemas);
+  if (lesson._relTables) return lesson._relTables;
+  const set = new Set(lesson.tables || []);
+  const parts = [lesson.task || ''];
+  for (const ex of (lesson.exercises || [])) {
+    parts.push(ex.prompt || '', ex.hint || '', (ex.solution || []).join(' '), ex._ref || '');
   }
-  return tables;
+  const text = parts.join(' ').toLowerCase();
+  for (const name of Object.keys(schemas)) {
+    if (!set.has(name) && new RegExp('\\b' + name + '\\b').test(text)) set.add(name);
+  }
+  lesson._relTables = [...set];
+  return lesson._relTables;
+}
+
+// ── Context-aware SQL autocomplete ──
+// Ranks suggestions by where you are in the statement so the highlighted
+// (first) item fits the context: statement keywords at the start, tables after
+// FROM/JOIN, columns after SELECT/WHERE/etc. — instead of the default hint's
+// alphabetical mix that surfaces `salary` when you meant `SELECT`.
+const SQL_STARTERS = ['SELECT', 'WITH', 'INSERT INTO', 'UPDATE', 'DELETE FROM',
+  'CREATE TABLE', 'CREATE VIEW', 'CREATE INDEX', 'DROP TABLE', 'DROP VIEW'];
+const SQL_KEYWORDS = ['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'HAVING',
+  'LIMIT', 'OFFSET', 'JOIN', 'LEFT JOIN', 'INNER JOIN', 'CROSS JOIN', 'ON', 'AS',
+  'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN', 'IS NULL', 'IS NOT NULL', 'DISTINCT',
+  'UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT', 'DESC', 'ASC', 'CASE', 'WHEN',
+  'THEN', 'ELSE', 'END', 'OVER', 'PARTITION BY', 'ON CONFLICT'];
+const SQL_FUNCS = ['COUNT(', 'SUM(', 'AVG(', 'MIN(', 'MAX(', 'ROUND(', 'COALESCE(',
+  'IFNULL(', 'NULLIF(', 'UPPER(', 'LOWER(', 'LENGTH(', 'SUBSTR(', 'REPLACE(', 'TRIM(',
+  'INSTR(', 'STRFTIME(', 'DATE(', 'JULIANDAY(', 'ROW_NUMBER() OVER (', 'RANK() OVER (',
+  'DENSE_RANK() OVER (', 'LAG(', 'LEAD(', 'FIRST_VALUE(', 'GROUP_CONCAT('];
+
+// The clause governing the cursor position = the last clause keyword before it.
+function currentClause(before) {
+  const clauses = ['select', 'from', 'where', 'group by', 'order by', 'having',
+    'join', 'on', 'set', 'values', 'into', 'update', 'delete'];
+  let best = null, bestIdx = -1;
+  for (const kw of clauses) {
+    const re = new RegExp('\\b' + kw.replace(' ', '\\s+') + '\\b', 'g');
+    let m, last = -1;
+    while ((m = re.exec(before)) !== null) last = m.index;
+    if (last > bestIdx) { bestIdx = last; best = kw; }
+  }
+  return best;
+}
+
+// Distinct column names across the tables in scope for this lesson.
+function hintColumns() {
+  const tables = currentLesson ? relevantTables(currentLesson) : Object.keys(schemas);
+  const cols = [], seen = new Set();
+  for (const t of tables) {
+    if (!schemas[t]) continue;
+    for (const c of schemas[t].cols) if (!seen.has(c.name)) { seen.add(c.name); cols.push(c.name); }
+  }
+  return cols;
+}
+
+// Resolve a `t.` prefix to a table — either a real table name or an alias
+// introduced by `FROM/JOIN <table> [AS] <alias>`.
+function resolveAlias(before, alias) {
+  if (schemas[alias]) return alias;
+  const re = new RegExp('\\b(' + Object.keys(schemas).join('|') + ')\\s+(?:as\\s+)?' + alias + '\\b', 'i');
+  const m = before.match(re);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function sqlHint(cm) {
+  const cur = cm.getCursor();
+  const line = cm.getLine(cur.line);
+  let start = cur.ch;
+  while (start > 0 && /[\w.]/.test(line.charAt(start - 1))) start--;
+  const word = line.slice(start, cur.ch);
+  const beforeLc = cm.getRange({ line: 0, ch: 0 }, { line: cur.line, ch: start }).toLowerCase();
+
+  // `table.column` — complete that table's columns.
+  const dot = word.lastIndexOf('.');
+  if (dot >= 0) {
+    const tbl = resolveAlias(beforeLc, word.slice(0, dot).toLowerCase());
+    const prefix = word.slice(dot + 1).toLowerCase();
+    const cols = (tbl && schemas[tbl]) ? schemas[tbl].cols.map(c => c.name) : hintColumns();
+    return { list: cols.filter(c => c.toLowerCase().startsWith(prefix)),
+             from: { line: cur.line, ch: start + dot + 1 }, to: cur };
+  }
+
+  const cols = hintColumns();
+  const tables = currentLesson ? relevantTables(currentLesson) : Object.keys(schemas);
+  const clause = currentClause(beforeLc);
+  const beforeTrim = beforeLc.replace(/\s+$/, '');
+  const atStart = beforeTrim === '' || beforeTrim.endsWith(';');
+
+  // Ordered category buckets — the first bucket wins the highlight.
+  let order;
+  if (atStart) order = [SQL_STARTERS, SQL_KEYWORDS, cols, SQL_FUNCS, tables];
+  else if (clause === 'from' || clause === 'join' || clause === 'into' || clause === 'update')
+    order = [tables, cols, SQL_KEYWORDS];
+  else if (clause === 'select')
+    order = [cols, SQL_FUNCS, SQL_KEYWORDS, tables];   // aggregates common in SELECT
+  else if (clause === 'where' || clause === 'having' || clause === 'on')
+    order = [cols, SQL_KEYWORDS, SQL_FUNCS, tables];   // AND/OR/IN/GROUP BY common after a condition
+  else if (clause === 'group by' || clause === 'order by' || clause === 'set')
+    order = [cols, SQL_FUNCS, SQL_KEYWORDS];
+  else
+    order = [cols, SQL_KEYWORDS, SQL_FUNCS, tables, SQL_STARTERS];
+
+  const prefix = word.toLowerCase();
+  const list = [], seen = new Set();
+  for (const bucket of order) {
+    for (const item of bucket) {
+      if (prefix && !item.toLowerCase().startsWith(prefix)) continue;
+      const key = item.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); list.push(item); }
+    }
+  }
+  return { list, from: { line: cur.line, ch: start }, to: cur };
 }
 
 function initResize() {
@@ -787,12 +1042,14 @@ function initEditor() {
     extraKeys: {
       'Ctrl-Enter': runQuery,
       'Cmd-Enter': runQuery,
-      'Ctrl-Space': cm => CodeMirror.showHint(cm, CodeMirror.hint.sql, { tables: buildHintTables(), completeSingle: false })
+      'Ctrl-Space': cm => CodeMirror.showHint(cm, sqlHint, { completeSingle: false })
     }
   });
   editor.on('inputRead', (cm, event) => {
+    // Auto-suggest as you type a word or after a dot; the ranking is handled by
+    // sqlHint so the top item matches the current clause.
     if (!cm.state.completionActive && event.text[0] && /[\w.]/.test(event.text[0])) {
-      CodeMirror.showHint(cm, CodeMirror.hint.sql, { tables: buildHintTables(), completeSingle: false });
+      CodeMirror.showHint(cm, sqlHint, { completeSingle: false });
     }
   });
 }
@@ -1034,7 +1291,7 @@ function loadLesson(lesson) {
   updateDayNav();
 
   const schemaPills = document.getElementById('schema-pills');
-  schemaPills.innerHTML = lesson.tables.map(t => `<span class="schema-pill" onclick="showSchema('${t}')">${t}</span>`).join('');
+  schemaPills.innerHTML = relevantTables(lesson).map(t => `<span class="schema-pill" onclick="showSchema('${t}')">${t}</span>`).join('');
 
   const dayData = curriculum.find(d => d.lessons.includes(lesson));
   const total = curriculum.flatMap(d => d.lessons).length;
@@ -1072,6 +1329,24 @@ function showEmpty() {
 
 let lastExecMs = null;
 
+// Column names of the last row-returning statement in `sql`, or null if no
+// statement returns rows (i.e. it's purely DDL/DML). Used to detect a SELECT
+// that ran fine but matched zero rows, which db.exec() reports the same as a
+// data change. Compiling statements here does not re-run them (no step()), so
+// side effects from the preceding db.exec() are not duplicated.
+function resultColumnsFor(sql) {
+  try {
+    if (typeof db.iterateStatements !== 'function') return null;
+    let cols = null;
+    for (const stmt of db.iterateStatements(sql)) {
+      const c = stmt.getColumnNames();
+      if (c && c.length) cols = c;
+      stmt.free();
+    }
+    return cols;
+  } catch { return null; }
+}
+
 function runQuery() {
   if (!db || !currentLesson) return;
   const sql = editor ? editor.getValue().trim() : '';
@@ -1083,6 +1358,18 @@ function runQuery() {
     queriesRun++;
     addQueryToHistory(sql);
     if (results.length === 0) {
+      // db.exec() returns [] for BOTH a real DDL/DML statement AND a SELECT
+      // that simply matched zero rows. Tell them apart so a legitimately empty
+      // SELECT is shown as "0 rows" and still validated — not mislabelled as a
+      // data change.
+      const emptyCols = resultColumnsFor(sql);
+      if (emptyCols) {
+        renderTable(emptyCols, []);
+        if (currentExercise) checkExercise(sql, emptyCols, []);
+        else checkSolution(sql, emptyCols, []);
+        checkAchievements();
+        return;
+      }
       showFeedback('info', 'Statement executed', 'No rows returned — a data change or DDL statement ran successfully. Add a SELECT at the end to inspect the result.');
       document.getElementById('row-count').style.display = 'none';
       if (!currentExercise) checkSolution(sql, [], []);
@@ -1147,14 +1434,14 @@ function exportCSV() {
 
 function checkSolution(sql) {
   if (!currentLesson) return;
-  const clean = sql.toLowerCase().replace(/\s+/g,' ').replace(/;/g,'').trim();
-  // Fast path: the query text contains a known solution string.
-  let matches = currentLesson.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g,' ')));
-  // Otherwise, accept any query that produces the same results as the model
-  // answer — so a correct query written differently still counts.
-  if (!matches) {
-    try { matches = SqlEngine.matchesLesson(sql, currentLesson); } catch { matches = false; }
-  }
+  // Correctness is decided purely by RESULT-SET EQUIVALENCE (engine.js): a query
+  // is correct iff it produces the same results as a reference answer — however
+  // it's written. Every lesson has authored references (refs.js), so the old
+  // brittle text/substring matching is gone. State-changing lessons are judged
+  // by a state probe; open-ended capstones by a structural accept path.
+  let verdict = 'unknown';
+  try { verdict = SqlEngine.evaluate(sql, currentLesson); } catch { verdict = 'unknown'; }
+  const matches = verdict === 'pass';
   if (matches && !completedLessons.has(currentLesson.id)) {
     completedLessons.add(currentLesson.id);
     const earned = awardXP(currentLesson.xp);

@@ -234,6 +234,43 @@ body {
 .daily-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
 .daily-btn.done { border-color: rgba(52,211,153,0.3); background: var(--green-soft); color: var(--green); }
 
+.quiz-btn {
+  border: 1px solid rgba(34,211,238,0.35);
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--t) var(--ease);
+}
+.quiz-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
+
+/* ── Quiz modal ── */
+.quiz-meta { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text2); }
+.quiz-progress-bar { height: 5px; border-radius: 3px; background: var(--bg3); overflow: hidden; margin-top: 8px; }
+.quiz-progress-fill { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--accent)); transition: width .3s var(--ease); }
+.quiz-origin { font-size: 11px; color: var(--text2); margin-top: 14px; text-transform: uppercase; letter-spacing: .04em; }
+.quiz-prompt { font-size: 15px; font-weight: 600; line-height: 1.5; margin: 6px 0 2px; color: var(--text); }
+.quiz-tables { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.quiz-answer {
+  width: 100%; box-sizing: border-box;
+  min-height: 110px; resize: vertical;
+  font-family: var(--mono); font-size: 13px; line-height: 1.5;
+  padding: 10px 12px; margin-top: 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--bg2); color: var(--text);
+}
+.quiz-answer:focus { outline: none; border-color: var(--accent); }
+.quiz-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.quiz-score-wrap { text-align: center; padding: 16px 0 6px; }
+.quiz-score-num { font-size: 46px; font-weight: 800; color: var(--text); line-height: 1; }
+.quiz-score-num span { font-size: 22px; color: var(--text2); }
+.quiz-score-pct { font-size: 13px; color: var(--text2); margin-top: 4px; }
+
 .level-widget {
   display: flex; align-items: center; gap: 9px;
   padding: 4px 10px 4px 5px;

@@ -67,6 +67,22 @@ function lessonById(id) {
     check(`${id}: ${sql.replace(/\s+/g, ' ').slice(0, 60)}`, !SqlEngine.matchesLesson(sql, l));
   }
 
+  // Wrong queries that CONTAIN a solution string as a substring — the old text
+  // matcher wrongly accepted these; the engine must return an authoritative
+  // 'fail' so text matching can't override it.
+  const falsePositives = [
+    ['1.1', "SELECT * FROM employees WHERE 1=1 AND department = 'Engineering'"], // filtered, not "all"
+    ['1.1', 'SELECT * FROM employees LIMIT 3'],                                   // only 3 of 15 rows
+  ];
+  console.log('\nWrong-but-contains-solution (engine must say fail, not pass):');
+  for (const [id, sql] of falsePositives) {
+    const l = lessonById(id);
+    const clean = sql.toLowerCase().replace(/\s+/g, ' ').replace(/;/g, '').trim();
+    const oldWouldAccept = l.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g, ' ')));
+    check(`${id}: ${sql.replace(/\s+/g, ' ').slice(0, 55)} (old text-match=${oldWouldAccept})`,
+      SqlEngine.evaluate(sql, l) === 'fail');
+  }
+
   // Every lesson's own starter must be accepted by the engine when it is a
   // SELECT (result-set self-consistency) — regression guard.
   console.log('\nStarters self-validate (where a SELECT reference exists):');

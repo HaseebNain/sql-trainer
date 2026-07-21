@@ -42,6 +42,7 @@
   </div>
 
   <div class="topbar-right">
+    <button class="quiz-btn" id="quiz-btn" onclick="startQuiz()" title="Quick self-check — random questions from lessons you've completed">🧠 Quiz</button>
     <button class="daily-btn" id="daily-btn" onclick="startDailyChallenge()" title="One challenge a day. Double XP. Keeps your streak alive.">🎯 Daily ×2</button>
     <div class="streak-pill" id="streak-pill" title="Daily streak — complete anything once a day to keep it burning">🔥 0</div>
     <div class="level-widget" onclick="openCareerModal()" title="Click to see your Data Engineer readiness">
@@ -141,6 +142,7 @@
 <script src="vendor/sql-wasm.js"></script>
 <script src="vendor/sql-wasm-b64.js"></script>
 <script src="data.js"></script>
+<script src="refs.js"></script>
 <script src="engine.js"></script>
 <script src="app.js"></script>
 </body>

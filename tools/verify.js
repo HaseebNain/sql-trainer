@@ -1,14 +1,18 @@
 // Curriculum verification harness.
 // Seeds the same SQLite database the app uses, then checks every lesson and
-// exercise: starters must run cleanly, lesson starters must satisfy their own
-// solution matcher, and any exercise that carries a `_ref` query must pass its
-// own `validate` rules. Run with: node tools/verify.js
+// exercise: starters must run cleanly, every lesson must have a self-validating
+// result-set REFERENCE (refs.js) so the engine can grade it, and any exercise
+// that carries a `_ref` query must pass its own `validate` rules.
+// Run with: node tools/verify.js
 const path = require('path');
 const fs = require('fs');
 const initSqlJs = require(path.join(__dirname, '..', 'vendor', 'sql-wasm.js'));
+const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 
-const dataSrc = fs.readFileSync(path.join(__dirname, '..', 'data.js'), 'utf8');
-const { curriculum, schemas } = new Function(dataSrc + ';\nreturn { curriculum, schemas };')();
+const { curriculum, schemas } = new Function(read('data.js') + ';\nreturn { curriculum, schemas };')();
+const LESSON_REFS = new Function(read('refs.js') + ';\nreturn LESSON_REFS;')();
+const SqlEngine = new Function('schemas', 'LESSON_REFS', 'module',
+  read('engine.js') + ';\nreturn SqlEngine;')(schemas, LESSON_REFS, {});
 
 function freshDb(SQL) {
   const db = new SQL.Database();
@@ -70,7 +74,8 @@ function validatePasses(v, columns, values) {
 
 (async () => {
   const SQL = await initSqlJs({ locateFile: f => path.join(__dirname, '..', 'vendor', f) });
-  let errors = 0, warnings = 0, lessons = 0, exercises = 0, refChecked = 0;
+  SqlEngine.init(SQL);
+  let errors = 0, warnings = 0, lessons = 0, exercises = 0, refChecked = 0, uncovered = 0;
 
   for (const day of curriculum) {
     for (const lesson of day.lessons) {
@@ -81,19 +86,36 @@ function validatePasses(v, columns, values) {
       for (const t of lesson.tables || []) {
         if (!schemas[t]) { console.log(`ERROR ${lesson.id}: references unknown table '${t}'`); errors++; }
       }
-      try {
-        const res = runSql(db, lesson.starter);
-        if (!solutionMatches(lesson.starter, lesson.solution)) {
-          console.log(`WARN  ${lesson.id} (${lesson.title}): starter does not satisfy its own solution matcher`);
-          warnings++;
+      if (lesson.starter && lesson.starter.trim()) {
+        try {
+          const res = runSql(db, lesson.starter);
+          if (lesson.expect) {
+            const err = validatePasses(lesson.expect, res ? res.columns : [], res ? res.values : []);
+            if (err) { console.log(`ERROR ${lesson.id}: starter expect failed — ${err}`); errors++; }
+          }
+        } catch (e) {
+          console.log(`ERROR ${lesson.id} (${lesson.title}): starter throws — ${e.message}`);
+          errors++;
         }
-        if (lesson.expect) {
-          const err = validatePasses(lesson.expect, res ? res.columns : [], res ? res.values : []);
-          if (err) { console.log(`ERROR ${lesson.id}: starter expect failed — ${err}`); errors++; }
+      }
+
+      // Engine coverage: every lesson must have a self-validating reference so
+      // the app can grade it by result-set equivalence (no legacy text match).
+      const refs = SqlEngine.referenceQueries(lesson);
+      const probe = SqlEngine.lessonProbe(lesson);
+      const setup = SqlEngine.lessonSetup(lesson);
+      const seq = x => [setup, x, probe].filter(s => s != null);
+      const runnable = refs.filter(r => { const res = SqlEngine.runOnFresh(seq(r)); return res && res.columns.length; });
+      if (!runnable.length) {
+        console.log(`ERROR ${lesson.id} (${lesson.title}): no self-validating reference (add one in refs.js)`);
+        errors++; uncovered++;
+      } else {
+        for (const r of runnable) {
+          if (SqlEngine.evaluate(r, lesson) !== 'pass') {
+            console.log(`ERROR ${lesson.id}: reference does not self-validate — ${r.slice(0, 60)}`);
+            errors++;
+          }
         }
-      } catch (e) {
-        console.log(`ERROR ${lesson.id} (${lesson.title}): starter throws — ${e.message}`);
-        errors++;
       }
 
       for (const ex of lesson.exercises || []) {
@@ -119,6 +141,6 @@ function validatePasses(v, columns, values) {
       db.close();
     }
   }
-  console.log(`\n${lessons} lessons, ${exercises} exercises (${refChecked} with _ref checks): ${errors} errors, ${warnings} warnings`);
+  console.log(`\n${lessons} lessons (${uncovered} without a reference), ${exercises} exercises (${refChecked} with _ref checks): ${errors} errors, ${warnings} warnings`);
   process.exit(errors ? 1 : 0);
 })();

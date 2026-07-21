@@ -47,30 +47,53 @@ Days 1–21 cover what a junior SQL screen tests. The Data Engineer track (days 
 | `index.html` | App shell and markup |
 | `styles.css` | Design system — tokens, light/dark themes, all components |
 | `data.js` | The curriculum (lessons, exercises, validations) and sample database |
-| `app.js` | App engine — SQL runner, validation, gamification, navigation |
-| `engine.js` | Semantic validator — accepts any query whose *results* match the model answer |
+| `app.js` | App engine — SQL runner, grading, gamification, navigation |
+| `engine.js` | Result-set validator — grades a query by the *results* it produces |
+| `refs.js` | Authored reference answers per lesson (the grading source of truth) |
 | `vendor/` | CodeMirror + sql.js, vendored for offline use |
-| `tools/verify.js` | Node harness that seeds the DB and validates every lesson & exercise |
-| `tools/engine-test.js` | Node checks that the semantic validator accepts equivalents / rejects wrong answers |
+| `tools/verify.js` | Authoritative gate: starters run, and every lesson has a self-validating reference |
+| `tools/verify-refs.js` | Focused report of reference coverage / self-validation |
+| `tools/engine-test.js` | Checks the validator accepts equivalents / rejects wrong answers |
 | `tools/check-wiring.js` | Static check that markup handlers/ids match the engine |
 
 ### How answers are validated
 
-A submitted query is accepted if **either** its text contains a known solution
-string (fast path) **or** it produces the same result set as the lesson's model
-answer. The result-set check (`engine.js`) runs the reference answer and the
-learner's query against clean, identical copies of the practice database and
-compares the results — so a correct query still counts when it's written
-differently (reordered columns, different casing/whitespace, an equivalent
-predicate like `>= 70000 AND <= 90000` for a `BETWEEN`, table aliases, an extra
-`ORDER BY`, and so on). It is purely additive: wrong answers are still rejected.
+Lessons are graded purely by **result-set equivalence** — *not* by matching the
+query text. `engine.js` runs a faithful reference answer and the learner's query
+against clean, identical copies of the practice database and compares the
+results. Any query that produces the same answer passes, however it's written:
+reordered columns, different casing/whitespace, an equivalent predicate
+(`>= 70000 AND <= 90000` for a `BETWEEN`), table aliases, an alias vs no alias,
+an extra `ORDER BY`, or a different-but-equivalent approach. Column **names** are
+ignored (columns are matched by their values). Wrong answers are rejected even
+when they happen to contain a keyword the old text matcher looked for.
+
+Reference answers live in `refs.js` as `LESSON_REFS[lessonId]`:
+
+- **`refs`** — one or more accepted reference queries; a submission passes if it
+  matches **any** of them (open-ended lessons list several valid variants).
+- **`setup`** / **`probe`** — for state-changing lessons (DDL, `INSERT`/`UPDATE`,
+  upserts, indexes, SCD2). `setup` is an idempotent scaffold run first; `probe`
+  is a `SELECT` (e.g. against `sqlite_master` for an index, or the mutated table)
+  run **after** the learner's statements. The engine compares the *probe*
+  results, so the answer is judged by the database state it produces.
+- **`requires`** — a structural gate for lessons whose correct answer is
+  legitimately empty (a data-quality check), so a trivial 0-row query can't pass.
+- **`accept`** — a structural pass-path for genuinely open-ended capstones whose
+  exact result shape can't be pinned down; passes if the key constructs are used.
+
+Days 1–7 without a `refs.js` entry fall back to a derived reference (the
+correctly-cased `starter` plus quote-free `solution` variants). `node
+tools/verify.js` fails if any lesson lacks a self-validating reference.
 
 ## Contributing
 
-Add lessons in the `curriculum` array in `data.js` (sample data lives in `schemas` in the same file; gamification config in `LEVELS` / `ACHIEVEMENTS` / `SKILL_TRACKS` in `app.js`). Give each new exercise a `_ref` field containing a reference solution, then run:
+Add lessons in the `curriculum` array in `data.js` (sample data lives in `schemas` in the same file; gamification config in `LEVELS` / `ACHIEVEMENTS` / `SKILL_TRACKS` in `app.js`). For each new lesson, add a reference to `LESSON_REFS` in `refs.js` (see "How answers are validated" above) so the engine can grade it; give each new exercise a `_ref` field with a reference solution. Then run:
 
 ```
-node tools/verify.js
+node tools/verify.js       # authoritative gate — must be 0 errors
+node tools/verify-refs.js  # reference coverage detail
+node tools/engine-test.js  # equivalence accepted / wrong answers rejected
 ```
 
-The harness executes every starter and reference solution against the seeded database and fails if any validation doesn't hold — so exercise row counts can never drift from the data.
+The harness executes every starter and reference against the seeded database and fails if any lesson lacks a self-validating reference or any exercise validation doesn't hold — so grading can never silently drift from the data.
