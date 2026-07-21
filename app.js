@@ -452,7 +452,14 @@ function renderQuizQuestion() {
   const n = quizItems.length;
   const item = quizItems[quizIndex];
   const pct = Math.round((quizIndex / n) * 100);
-  const pills = item.tables.map(t => `<span class="schema-pill" style="cursor:default">${t}</span>`).join('');
+  // Show the schema (columns) for each table in play so it's answerable without
+  // leaving the quiz — the modal has no schema panel to click into.
+  const schema = item.tables.map(t => {
+    const s = schemas[t];
+    if (!s) return '';
+    const cols = s.cols.map(c => `<span class="quiz-col" title="${c.type}${c.pk ? ' · primary key' : ''}">${c.name}</span>`).join('');
+    return `<div class="quiz-schema-row"><span class="quiz-schema-name">${t}</span><span class="quiz-schema-cols">${cols}</span></div>`;
+  }).join('');
   openModal(`
     <div class="modal-header">
       <div class="modal-title">🧠 Quiz</div>
@@ -462,7 +469,7 @@ function renderQuizQuestion() {
     <div class="quiz-progress-bar"><div class="quiz-progress-fill" style="width:${pct}%"></div></div>
     <div class="quiz-origin">${item.kind === 'lesson' ? 'Lesson' : 'Exercise'} · Day ${item.day} · ${escapeHtml(item.lesson.title)}</div>
     <div class="quiz-prompt">${item.prompt}</div>
-    ${pills ? `<div class="quiz-tables">${pills}</div>` : ''}
+    ${schema ? `<div class="quiz-schema">${schema}</div>` : ''}
     <textarea class="quiz-answer" id="quiz-answer" placeholder="Write your SQL here…" spellcheck="false" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')checkQuizAnswer()"></textarea>
     <div id="quiz-feedback"></div>
     <div class="quiz-actions" id="quiz-actions">
@@ -719,7 +726,7 @@ function clearExercise() {
 }
 
 // Pure pass/fail check for an exercise given a query and its result set.
-// Shared by the lesson flow (checkExercise) and the Quiz.
+// Shared by the lesson flow (gradeSubmission) and the Quiz.
 function exercisePasses(ex, sql, columns, values) {
   if (ex.validate) {
     const v = ex.validate;
@@ -774,33 +781,41 @@ function exercisePasses(ex, sql, columns, values) {
   return false;
 }
 
-function checkExercise(sql, columns, values) {
-  if (!currentExercise) return;
-  const ex = currentExercise;
-  const passed = exercisePasses(ex, sql, columns, values);
-
-  if (passed) {
-    const dailyBonus = handleDailyCompletion(ex);
-    if (!completedExercises.has(ex.id)) {
-      completedExercises.add(ex.id);
-      const earned = awardXP(ex.xp);
-      playSound('exercise');
-      const comboNote = combo >= 3 ? ` <span style="color:var(--amber)">🔥 ${combo}× combo</span>` : '';
-      const dailyNote = dailyBonus ? ` <span style="color:var(--purple)">🎯 +${dailyBonus} daily bonus</span>` : '';
-      const existing = document.getElementById('output-content').innerHTML;
-      document.getElementById('output-content').innerHTML =
-        `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct! +${earned} XP${comboNote}${dailyNote}</div>Nice work! Try the next exercise or continue to the next lesson.</div><hr class="divider">${existing}`;
-      renderExercisesList();
-    } else if (dailyBonus) {
-      const existing = document.getElementById('output-content').innerHTML;
-      document.getElementById('output-content').innerHTML =
-        `<div class="feedback-box feedback-success"><div class="feedback-label">🎯 Daily Challenge! +${dailyBonus} XP</div>Solved again for the daily bonus. See you tomorrow.</div><hr class="divider">${existing}`;
-    }
-  } else {
+// Credit a passed practice exercise: XP, completion, success feedback.
+function creditExercise(ex) {
+  const dailyBonus = handleDailyCompletion(ex);
+  if (!completedExercises.has(ex.id)) {
+    completedExercises.add(ex.id);
+    const earned = awardXP(ex.xp);
+    playSound('exercise');
+    const comboNote = combo >= 3 ? ` <span style="color:var(--amber)">🔥 ${combo}× combo</span>` : '';
+    const dailyNote = dailyBonus ? ` <span style="color:var(--purple)">🎯 +${dailyBonus} daily bonus</span>` : '';
     const existing = document.getElementById('output-content').innerHTML;
     document.getElementById('output-content').innerHTML =
-      `<div class="feedback-box feedback-info"><div class="feedback-label">Not quite yet</div>Your query ran, but the results don't match the goal. Re-read the prompt — or grab a 💡 hint (costs your combo).</div><hr class="divider">${existing}`;
+      `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct! +${earned} XP${comboNote}${dailyNote}</div>Nice work! Try the next exercise or continue to the next lesson.</div><hr class="divider">${existing}`;
+    renderExercisesList();
+  } else if (dailyBonus) {
+    const existing = document.getElementById('output-content').innerHTML;
+    document.getElementById('output-content').innerHTML =
+      `<div class="feedback-box feedback-success"><div class="feedback-label">🎯 Daily Challenge! +${dailyBonus} XP</div>Solved again for the daily bonus. See you tomorrow.</div><hr class="divider">${existing}`;
   }
+}
+
+function exerciseNotQuite() {
+  const existing = document.getElementById('output-content').innerHTML;
+  document.getElementById('output-content').innerHTML =
+    `<div class="feedback-box feedback-info"><div class="feedback-label">Not quite yet</div>Your query ran, but the results don't match the goal. Re-read the prompt — or grab a 💡 hint (costs your combo).</div><hr class="divider">${existing}`;
+}
+
+// Grade a run against BOTH the active practice exercise AND the lesson's main
+// task, so solving the main task still counts while a practice exercise is
+// selected. The exercise "not quite" nudge only shows if neither goal was met.
+function gradeSubmission(sql, columns, values) {
+  const ex = currentExercise;
+  const exPassed = ex ? exercisePasses(ex, sql, columns, values) : false;
+  if (exPassed) creditExercise(ex);
+  const lessonPassed = checkSolution(sql);
+  if (ex && !exPassed && !lessonPassed) exerciseNotQuite();
 }
 
 function renderExercisesList() {
@@ -1365,14 +1380,13 @@ function runQuery() {
       const emptyCols = resultColumnsFor(sql);
       if (emptyCols) {
         renderTable(emptyCols, []);
-        if (currentExercise) checkExercise(sql, emptyCols, []);
-        else checkSolution(sql, emptyCols, []);
+        gradeSubmission(sql, emptyCols, []);
         checkAchievements();
         return;
       }
       showFeedback('info', 'Statement executed', 'No rows returned — a data change or DDL statement ran successfully. Add a SELECT at the end to inspect the result.');
       document.getElementById('row-count').style.display = 'none';
-      if (!currentExercise) checkSolution(sql, [], []);
+      gradeSubmission(sql, [], []);
       checkAchievements();
       return;
     }
@@ -1380,8 +1394,7 @@ function runQuery() {
     // "CREATE ...; INSERT ...; SELECT ..." flows display the final SELECT.
     const { columns, values } = results[results.length - 1];
     renderTable(columns, values);
-    if (currentExercise) checkExercise(sql, columns, values);
-    else checkSolution(sql, columns, values);
+    gradeSubmission(sql, columns, values);
     checkAchievements();
   } catch (e) {
     errorsMade++;
@@ -1433,7 +1446,7 @@ function exportCSV() {
 }
 
 function checkSolution(sql) {
-  if (!currentLesson) return;
+  if (!currentLesson) return false;
   // Correctness is decided purely by RESULT-SET EQUIVALENCE (engine.js): a query
   // is correct iff it produces the same results as a reference answer — however
   // it's written. Every lesson has authored references (refs.js), so the old
@@ -1459,6 +1472,7 @@ function checkSolution(sql) {
     document.getElementById('output-content').innerHTML = html + '<hr class="divider">' + existing;
     buildSidebar();
   }
+  return matches;
 }
 
 function getNextLesson() {
