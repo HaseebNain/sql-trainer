@@ -633,6 +633,10 @@ function checkExercise(sql, columns, values) {
   } else if (ex.solution) {
     const clean = sql.toLowerCase().replace(/\s+/g,' ').replace(/;/g,'').trim();
     passed = ex.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g,' ')));
+    // Also accept a query that produces the same results as a full-SELECT key.
+    if (!passed) {
+      try { passed = SqlEngine.matchesLesson(sql, ex); } catch { passed = false; }
+    }
   }
 
   if (passed) {
@@ -825,6 +829,7 @@ async function initDB() {
   }
   const SQL = await initSqlJs(config);
   sqlModule = SQL;
+  SqlEngine.init(SQL);
   seedDatabase(SQL);
   const savedLessonId = loadProgress();
   initEditor();
@@ -1143,7 +1148,13 @@ function exportCSV() {
 function checkSolution(sql) {
   if (!currentLesson) return;
   const clean = sql.toLowerCase().replace(/\s+/g,' ').replace(/;/g,'').trim();
-  const matches = currentLesson.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g,' ')));
+  // Fast path: the query text contains a known solution string.
+  let matches = currentLesson.solution.some(s => clean.includes(s.toLowerCase().replace(/\s+/g,' ')));
+  // Otherwise, accept any query that produces the same results as the model
+  // answer — so a correct query written differently still counts.
+  if (!matches) {
+    try { matches = SqlEngine.matchesLesson(sql, currentLesson); } catch { matches = false; }
+  }
   if (matches && !completedLessons.has(currentLesson.id)) {
     completedLessons.add(currentLesson.id);
     const earned = awardXP(currentLesson.xp);

@@ -47,10 +47,23 @@ Days 1–21 cover what a junior SQL screen tests. The Data Engineer track (days 
 | `index.html` | App shell and markup |
 | `styles.css` | Design system — tokens, light/dark themes, all components |
 | `data.js` | The curriculum (lessons, exercises, validations) and sample database |
-| `app.js` | Engine — SQL runner, validation, gamification, navigation |
+| `app.js` | App engine — SQL runner, validation, gamification, navigation |
+| `engine.js` | Semantic validator — accepts any query whose *results* match the model answer |
 | `vendor/` | CodeMirror + sql.js, vendored for offline use |
 | `tools/verify.js` | Node harness that seeds the DB and validates every lesson & exercise |
+| `tools/engine-test.js` | Node checks that the semantic validator accepts equivalents / rejects wrong answers |
 | `tools/check-wiring.js` | Static check that markup handlers/ids match the engine |
+
+### How answers are validated
+
+A submitted query is accepted if **either** its text contains a known solution
+string (fast path) **or** it produces the same result set as the lesson's model
+answer. The result-set check (`engine.js`) runs the reference answer and the
+learner's query against clean, identical copies of the practice database and
+compares the results — so a correct query still counts when it's written
+differently (reordered columns, different casing/whitespace, an equivalent
+predicate like `>= 70000 AND <= 90000` for a `BETWEEN`, table aliases, an extra
+`ORDER BY`, and so on). It is purely additive: wrong answers are still rejected.
 
 ## Contributing
 
