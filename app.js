@@ -20,6 +20,14 @@ let soundOn = localStorage.getItem('sql_bootcamp_sound') !== 'off';
 const PROGRESS_KEY = 'sql_bootcamp_progress';
 const QUERY_HISTORY_KEY = 'sql_bootcamp_query_history';
 
+// ── Version & update check ──
+// Bump APP_VERSION and version.json together on every release. The app is
+// offline-first; the update check is a best-effort network call that fails
+// silently when offline.
+const APP_VERSION = '1.0.0';
+const REPO_URL = 'https://github.com/HaseebNain/slq-trainer';
+const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/HaseebNain/slq-trainer/master/version.json';
+
 // ── Levels (calibrated to ~3,950 XP available, before combo/daily bonuses) ──
 const LEVELS = [
   { xp: 0,    title: "Row Rookie" },
@@ -408,6 +416,86 @@ function handleDailyCompletion(ex) {
   burstConfetti(false);
   saveProgress();
   return bonus;
+}
+
+// ── Updates ──
+let updateInfo = { checking: false, checked: false, available: false, latest: null, notes: '', error: null };
+
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+// Best-effort check against version.json on GitHub. Silent mode is used on
+// startup and never surfaces errors; the manual check re-renders the modal.
+async function checkForUpdate(opts) {
+  const silent = opts && opts.silent;
+  if (updateInfo.checking) return;
+  updateInfo.checking = true;
+  updateInfo.error = null;
+  if (!silent) renderUpdateModal();
+  try {
+    const resp = await fetch(UPDATE_CHECK_URL, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    updateInfo.latest = String(data.version || '').trim();
+    updateInfo.notes = data.notes || '';
+    updateInfo.available = !!updateInfo.latest && compareVersions(updateInfo.latest, APP_VERSION) > 0;
+    updateInfo.checked = true;
+    const btn = document.getElementById('ver-btn');
+    if (btn) {
+      btn.classList.toggle('has-update', updateInfo.available);
+      btn.textContent = updateInfo.available ? `Update to v${updateInfo.latest} ⬆` : `v${APP_VERSION}`;
+    }
+    if (updateInfo.available && silent) {
+      showToast('⬆', 'Update available', `Version ${updateInfo.latest} is out`, 'Open the version badge in the top bar to update.');
+    }
+  } catch (e) {
+    updateInfo.error = (e && e.message) || 'network error';
+  } finally {
+    updateInfo.checking = false;
+    // Only re-render if the modal is actually open (user didn't close it).
+    if (!silent && !document.getElementById('modal-overlay').classList.contains('hidden')) renderUpdateModal();
+  }
+}
+
+function renderUpdateModal() {
+  let body;
+  if (updateInfo.checking) {
+    body = `<div class="feedback-box feedback-info"><div class="feedback-label">Checking…</div>Contacting GitHub for the latest version.</div>`;
+  } else if (updateInfo.error) {
+    body = `<div class="feedback-box feedback-info"><div class="feedback-label">Couldn't check for updates</div>Couldn't reach GitHub (${escapeHtml(updateInfo.error)}). This app runs fully offline — you only need to update when you're online.</div>`;
+  } else if (updateInfo.available) {
+    body = `<div class="feedback-box feedback-success"><div class="feedback-label">⬆ Version ${escapeHtml(updateInfo.latest)} is available</div>You're on v${APP_VERSION}.${updateInfo.notes ? ' ' + escapeHtml(updateInfo.notes) : ''}</div>
+      <div class="update-how">
+        <div class="update-how-title">How to update</div>
+        <div><strong>Git:</strong> run <code>git pull</code> in the project folder.</div>
+        <div><strong>Or download:</strong> grab the latest from GitHub and replace your files.</div>
+        <div style="margin-top:6px;color:var(--text3)">Then hard-reload the page — <span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">R</span>. Your XP and progress are saved in this browser and are kept.</div>
+      </div>`;
+  } else if (updateInfo.checked) {
+    body = `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Up to date</div>You're running the latest version (v${APP_VERSION}).</div>`;
+  } else {
+    body = `<div class="feedback-box feedback-info"><div class="feedback-label">v${APP_VERSION}</div>Check GitHub to see whether a newer version is available.</div>`;
+  }
+  openModal(`
+    <div class="modal-header"><div class="modal-title">⬆ Updates</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-sub">SQL Quest · current version v${APP_VERSION}</div>
+    ${body}
+    <div class="quiz-actions" style="margin-top:14px">
+      <a class="btn btn-primary" href="${REPO_URL}" target="_blank" rel="noopener">Open on GitHub ↗</a>
+      <button class="btn btn-ghost" onclick="checkForUpdate({silent:false})" ${updateInfo.checking ? 'disabled' : ''}>${updateInfo.checking ? 'Checking…' : 'Check now'}</button>
+    </div>`);
+}
+
+function openUpdateModal() {
+  renderUpdateModal();
+  if (!updateInfo.checking) checkForUpdate({ silent: false });
 }
 
 // ── Quiz — random self-check drawn from completed lessons/exercises ──
@@ -1116,10 +1204,16 @@ async function initDB() {
   updateDailyBtn();
   document.getElementById('sound-btn').textContent = soundOn ? '🔊' : '🔇';
   updateThemeButton();
+  const verBtn = document.getElementById('ver-btn');
+  if (verBtn) verBtn.textContent = `v${APP_VERSION}`;
   const allLessons = curriculum.flatMap(d => d.lessons);
   const startLesson = (savedLessonId && allLessons.find(l => l.id === savedLessonId)) || allLessons[0];
   loadLesson(startLesson);
   if (!savedLessonId && completedLessons.size === 0) showWelcome();
+  // Best-effort update check (offline-safe, non-blocking).
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+    checkForUpdate({ silent: true }).catch(() => {});
+  }
 }
 
 function buildUI() {

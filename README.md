@@ -39,6 +39,7 @@ Days 1–21 cover what a junior SQL screen tests. The Data Engineer track (days 
 - **Gamification** — XP with 15 levels (*Row Rookie* → *Principal Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 26 achievements 🏆.
 - **Data Engineer Readiness report** 📈 — click your level badge for per-skill progress mapped to real job requirements.
 - **AI Tutor** (optional) — paste an Anthropic API key in the AI Tutor tab for a lesson-aware tutor. The key stays in your browser.
+- **Update check** — the version badge in the top bar checks GitHub for a newer release and, when you're online, tells you how to update (`git pull` or re-download). It's best-effort and fails silently offline; your saved XP/progress survive updates.
 
 ## Project Structure
 
@@ -97,3 +98,12 @@ node tools/engine-test.js  # equivalence accepted / wrong answers rejected
 ```
 
 The harness executes every starter and reference against the seeded database and fails if any lesson lacks a self-validating reference or any exercise validation doesn't hold — so grading can never silently drift from the data.
+
+### Releasing a new version
+
+The in-app update check compares a baked-in version to `version.json` on `master`. To publish an update, bump **both** in the same commit and push:
+
+- `APP_VERSION` in `app.js`
+- `version` (and optional `notes`) in `version.json`
+
+Users on an older copy will then see the update prompt next time they open the app online.
