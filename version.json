@@ -1,5 +1,5 @@
 {
-  "version": "1.0.5",
-  "notes": "Result-set grading engine, practice quiz, context-aware autocomplete, and schema fixes.",
+  "version": "1.1.0",
+  "notes": "Wrong-answer explainer, Snowflake/BigQuery dialect track, the plant-floor warehouse capstone (Days 29-39), mock interviews, and local-model support for the AI tutor.",
   "url": "https://github.com/HaseebNain/sql-trainer"
 }

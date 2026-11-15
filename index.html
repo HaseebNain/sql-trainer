@@ -42,6 +42,7 @@
   </div>
 
   <div class="topbar-right">
+    <button class="interview-btn" id="interview-btn" onclick="openInterview()" title="Timed mock interview with follow-up questions and a scorecard — solo, or with an AI interviewer">🎤 Interview</button>
     <button class="quiz-btn" id="quiz-btn" onclick="startQuiz()" title="Quick self-check — random questions from lessons you've completed">🧠 Quiz</button>
     <button class="daily-btn" id="daily-btn" onclick="startDailyChallenge()" title="One challenge a day. Double XP. Keeps your streak alive.">🎯 Daily ×2</button>
     <div class="streak-pill" id="streak-pill" title="Daily streak — complete anything once a day to keep it burning">🔥 0</div>
@@ -142,9 +143,19 @@
 <script src="vendor/sql-hint.min.js"></script>
 <script src="vendor/sql-wasm.js"></script>
 <script src="vendor/sql-wasm-b64.js"></script>
+<!-- Course content: data.js declares `curriculum` and `schemas`; the add-on
+     files extend them. Keep this order in sync with tools/load.js. -->
 <script src="data.js"></script>
+<script src="data-warehouse.js"></script>
+<script src="course-dialects.js"></script>
+<script src="course-warehouse.js"></script>
 <script src="refs.js"></script>
 <script src="engine.js"></script>
+<script src="explain.js"></script>
+<script src="dialect.js"></script>
+<script src="ai.js"></script>
+<script src="interview-bank.js"></script>
 <script src="app.js"></script>
+<script src="interview.js"></script>
 </body>
 </html>
