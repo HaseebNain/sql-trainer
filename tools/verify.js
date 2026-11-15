@@ -4,15 +4,8 @@
 // result-set REFERENCE (refs.js) so the engine can grade it, and any exercise
 // that carries a `_ref` query must pass its own `validate` rules.
 // Run with: node tools/verify.js
-const path = require('path');
-const fs = require('fs');
-const initSqlJs = require(path.join(__dirname, '..', 'vendor', 'sql-wasm.js'));
-const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-
-const { curriculum, schemas } = new Function(read('data.js') + ';\nreturn { curriculum, schemas };')();
-const LESSON_REFS = new Function(read('refs.js') + ';\nreturn LESSON_REFS;')();
-const SqlEngine = new Function('schemas', 'LESSON_REFS', 'module',
-  read('engine.js') + ';\nreturn SqlEngine;')(schemas, LESSON_REFS, {});
+const { loadCourse, initSql } = require('./load');
+const { curriculum, schemas, SqlEngine, DialectCheck } = loadCourse();
 
 function freshDb(SQL) {
   const db = new SQL.Database();
@@ -26,7 +19,18 @@ function freshDb(SQL) {
 // Mirrors app.js runQuery: last result set wins.
 function runSql(db, sql) {
   const results = db.exec(sql);
-  return results.length ? results[results.length - 1] : null;
+  if (results.length) return results[results.length - 1];
+  // A SELECT that matched zero rows: db.exec() reports nothing, but the app
+  // still shows (and grades) its columns — see resultColumnsFor in app.js.
+  let cols = null;
+  try {
+    for (const stmt of db.iterateStatements(sql)) {
+      const c = stmt.getColumnNames();
+      if (c && c.length) cols = c;
+      stmt.free();
+    }
+  } catch { cols = null; }
+  return cols ? { columns: cols, values: [] } : null;
 }
 
 // Mirrors app.js checkSolution string matching.
@@ -73,15 +77,32 @@ function validatePasses(v, columns, values) {
 }
 
 (async () => {
-  const SQL = await initSqlJs({ locateFile: f => path.join(__dirname, '..', 'vendor', f) });
+  const SQL = await initSql();
   SqlEngine.init(SQL);
-  let errors = 0, warnings = 0, lessons = 0, exercises = 0, refChecked = 0, uncovered = 0;
+  let errors = 0, warnings = 0, lessons = 0, exercises = 0, refChecked = 0, uncovered = 0, translations = 0;
+  const seenLessonIds = new Set(), seenExerciseIds = new Set();
+  // Capstone lessons (`liveSetup`) build on models from earlier lessons; the
+  // app runs their `setup` on the live database when the lesson opens, so the
+  // starter and exercise references are checked against that same state.
+  const prepared = lesson => {
+    const d = freshDb(SQL);
+    if (lesson.liveSetup && lesson.setup) d.exec(lesson.setup);
+    return d;
+  };
 
   for (const day of curriculum) {
     for (const lesson of day.lessons) {
       lessons++;
       // Every lesson gets a fresh DB — mirrors a user reloading the page.
-      let db = freshDb(SQL);
+      let db;
+      try { db = prepared(lesson); }
+      catch (e) { console.log(`ERROR ${lesson.id}: liveSetup throws — ${e.message}`); errors++; db = freshDb(SQL); }
+      if (seenLessonIds.has(lesson.id)) { console.log(`ERROR ${lesson.id}: duplicate lesson id`); errors++; }
+      seenLessonIds.add(lesson.id);
+      for (const f of ['title', 'theory', 'task', 'hint', 'chips', 'xp', 'tables']) {
+        if (lesson[f] === undefined) { console.log(`ERROR ${lesson.id}: missing field '${f}'`); errors++; }
+      }
+      if (typeof lesson.starter !== 'string') { console.log(`ERROR ${lesson.id}: missing starter`); errors++; }
 
       for (const t of lesson.tables || []) {
         if (!schemas[t]) { console.log(`ERROR ${lesson.id}: references unknown table '${t}'`); errors++; }
@@ -118,12 +139,27 @@ function validatePasses(v, columns, values) {
         }
       }
 
+      // Dialect lessons: the model translation must pass its own structural
+      // check, and the SQLite answer must NOT pass as a translation.
+      for (const tr of lesson.translate || []) {
+        translations++;
+        if (!DialectCheck) { console.log(`ERROR ${lesson.id}: translate present but dialect.js missing`); errors++; continue; }
+        const own = DialectCheck.check(tr.model, tr);
+        if (!own.ok) { console.log(`ERROR ${lesson.id} [${tr.dialect}]: model translation fails its own check — ${own.problems.map(p => p.msg).join(' | ')}`); errors++; }
+        for (const r of refs) {
+          if (DialectCheck.check(r, tr).ok) { console.log(`ERROR ${lesson.id} [${tr.dialect}]: the SQLite reference passes as a translation (check is too weak)`); errors++; }
+        }
+      }
+
       for (const ex of lesson.exercises || []) {
         exercises++;
+        if (seenExerciseIds.has(ex.id)) { console.log(`ERROR ${ex.id}: duplicate exercise id`); errors++; }
+        seenExerciseIds.add(ex.id);
         if (!ex.validate && !ex.solution) { console.log(`WARN  ${ex.id}: no validate and no solution`); warnings++; }
         if (ex._ref) {
           refChecked++;
-          db = freshDb(SQL);
+          db.close();
+          db = prepared(lesson);
           try {
             const res = runSql(db, ex._ref);
             if (ex.validate) {
@@ -141,6 +177,6 @@ function validatePasses(v, columns, values) {
       db.close();
     }
   }
-  console.log(`\n${lessons} lessons (${uncovered} without a reference), ${exercises} exercises (${refChecked} with _ref checks): ${errors} errors, ${warnings} warnings`);
+  console.log(`\n${lessons} lessons (${uncovered} without a reference), ${exercises} exercises (${refChecked} with _ref checks), ${translations} dialect translations: ${errors} errors, ${warnings} warnings`);
   process.exit(errors ? 1 : 0);
 })();

@@ -1,17 +1,8 @@
 // Verifies the semantic engine accepts correct-but-differently-written queries
 // that the old text matcher rejects, without accepting wrong answers.
 // Run with: node tools/engine-test.js
-const path = require('path');
-const fs = require('fs');
-const initSqlJs = require(path.join(__dirname, '..', 'vendor', 'sql-wasm.js'));
-
-const dataSrc = fs.readFileSync(path.join(__dirname, '..', 'data.js'), 'utf8');
-const { curriculum, schemas } = new Function(dataSrc + ';\nreturn { curriculum, schemas };')();
-
-// Load engine.js with `schemas` in scope (it references the global).
-const engineSrc = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
-const SqlEngine = new Function('schemas', 'module',
-  engineSrc + ';\nreturn SqlEngine;')(schemas, {});
+const { loadCourse, initSql } = require('./load');
+const { curriculum, SqlEngine } = loadCourse();
 
 // Old text matcher (mirrors app.js checkSolution fast path).
 function textMatches(sql, solutions) {
@@ -25,7 +16,7 @@ function lessonById(id) {
 }
 
 (async () => {
-  const SQL = await initSqlJs({ locateFile: f => path.join(__dirname, '..', 'vendor', f) });
+  const SQL = await initSql();
   SqlEngine.init(SQL);
 
   let pass = 0, fail = 0;
@@ -90,6 +81,9 @@ function lessonById(id) {
   for (const d of curriculum) for (const l of d.lessons) {
     if (!l.starter || !l.starter.trim()) continue;
     if (SqlEngine.referenceQueries(l).length === 0) continue;
+    // Add-on course files (inline `refs`) use scaffold starters that run but
+    // are deliberately incomplete — only legacy model-answer starters apply.
+    if (Array.isArray(l.refs)) continue;
     const cand = SqlEngine.runIsolated(l.starter);
     if (!cand || !cand.columns.length) continue; // DDL/DML starter
     starterChecked++;

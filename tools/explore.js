@@ -1,15 +1,23 @@
 // Scratch: inspect the seed DB and run ad-hoc queries while authoring lessons.
-// Usage: node tools/explore.js ["SQL..."]
-const path = require('path');
-const fs = require('fs');
-const initSqlJs = require(path.join(__dirname, '..', 'vendor', 'sql-wasm.js'));
-const src = fs.readFileSync(path.join(__dirname, '..', 'data.js'), 'utf8');
-const { schemas } = new Function(src + ';return {curriculum,schemas};')();
+// Usage: node tools/explore.js ["SQL..."] [--lesson 36.1]
+//   --lesson <id>  first run that lesson's `setup` (builds the capstone models
+//                  it depends on), so you can query stg_/dim_/fact_ objects.
+const { loadCourse, initSql } = require('./load');
+const { curriculum, schemas } = loadCourse();
 
-initSqlJs({ locateFile: f => path.join(__dirname, '..', 'vendor', f) }).then(SQL => {
+const args = process.argv.slice(2);
+const li = args.indexOf('--lesson');
+const lessonId = li >= 0 ? args.splice(li, 2)[1] : null;
+const sql = args[0];
+
+initSql().then(SQL => {
   const db = new SQL.Database();
   for (const t of Object.values(schemas)) { db.run(t.create); for (const i of t.insert) db.run(i); }
-  const sql = process.argv[2];
+  if (lessonId) {
+    const lesson = curriculum.flatMap(d => d.lessons).find(l => l.id === lessonId);
+    if (!lesson) { console.error('no lesson ' + lessonId); process.exit(1); }
+    if (lesson.setup) db.exec(lesson.setup);
+  }
   if (sql) {
     const res = db.exec(sql);
     for (const r of res) {
@@ -20,7 +28,7 @@ initSqlJs({ locateFile: f => path.join(__dirname, '..', 'vendor', f) }).then(SQL
     if (!res.length) console.log('(no result sets)');
     return;
   }
-  const tbls = db.exec("SELECT name FROM sqlite_master WHERE type='table'")[0].values.flat();
+  const tbls = db.exec("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")[0].values.flat();
   for (const t of tbls) {
     const n = db.exec(`SELECT COUNT(*) FROM ${t}`)[0].values[0][0];
     const cols = db.exec(`PRAGMA table_info(${t})`)[0].values.map(r => r[1] + ':' + r[2]).join(', ');

@@ -4,21 +4,13 @@
 // must return 'pass'. Also reports which lessons still lack an executable
 // reference (i.e. still depend on the legacy text matcher).
 // Run with: node tools/verify-refs.js  [--all]
-const path = require('path');
-const fs = require('fs');
-const initSqlJs = require(path.join(__dirname, '..', 'vendor', 'sql-wasm.js'));
-const ROOT = path.join(__dirname, '..');
-const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
-
-const { curriculum, schemas } = new Function(read('data.js') + ';\nreturn { curriculum, schemas };')();
-const LESSON_REFS = new Function(read('refs.js') + ';\nreturn LESSON_REFS;')();
-const SqlEngine = new Function('schemas', 'LESSON_REFS', 'module',
-  read('engine.js') + ';\nreturn SqlEngine;')(schemas, LESSON_REFS, {});
+const { loadCourse, initSql } = require('./load');
+const { curriculum, LESSON_REFS, SqlEngine } = loadCourse();
 
 const showAll = process.argv.includes('--all');
 
 (async () => {
-  const SQL = await initSqlJs({ locateFile: f => path.join(ROOT, 'vendor', f) });
+  const SQL = await initSql();
   SqlEngine.init(SQL);
 
   let total = 0, covered = 0, uncovered = 0, badRef = 0, ambiguous = 0;
