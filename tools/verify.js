@@ -5,7 +5,7 @@
 // that carries a `_ref` query must pass its own `validate` rules.
 // Run with: node tools/verify.js
 const { loadCourse, initSql } = require('./load');
-const { curriculum, schemas, SqlEngine, DialectCheck } = loadCourse();
+const { curriculum, schemas, SqlEngine, DialectCheck, INTERVIEW_BANK } = loadCourse();
 
 function freshDb(SQL) {
   const db = new SQL.Database();
@@ -177,6 +177,35 @@ function validatePasses(v, columns, values) {
       db.close();
     }
   }
-  console.log(`\n${lessons} lessons (${uncovered} without a reference), ${exercises} exercises (${refChecked} with _ref checks), ${translations} dialect translations: ${errors} errors, ${warnings} warnings`);
+  // Mock-interview bank: every problem is graded by the engine, so its
+  // references must run and self-validate exactly like a lesson's.
+  const lessonById = id => curriculum.flatMap(d => d.lessons).find(l => l.id === id);
+  const seenProblems = new Set();
+  for (const p of INTERVIEW_BANK) {
+    if (seenProblems.has(p.id)) { console.log(`ERROR ${p.id}: duplicate interview problem id`); errors++; }
+    seenProblems.add(p.id);
+    for (const t of p.tables || []) if (!schemas[t]) { console.log(`ERROR ${p.id}: unknown table '${t}'`); errors++; }
+    if (!p.followups || p.followups.length < 1) { console.log(`ERROR ${p.id}: no follow-up questions`); errors++; }
+    for (const d of p.review || []) if (!curriculum.some(x => x.day === d)) { console.log(`ERROR ${p.id}: review day ${d} does not exist`); errors++; }
+    let setup = null;
+    if (p.setupFrom) {
+      const src = lessonById(p.setupFrom);
+      if (!src || !src.setup) { console.log(`ERROR ${p.id}: setupFrom '${p.setupFrom}' has no setup`); errors++; continue; }
+      setup = src.setup;
+    }
+    const pseudo = { id: p.id, refs: p.refs, setup };
+    if (typeof p.ordered === 'boolean') pseudo.ordered = p.ordered;
+    for (const r of p.refs || []) {
+      const res = SqlEngine.runOnFresh([setup, r]);
+      if (!res || !res.values.length) { console.log(`ERROR ${p.id}: reference returns nothing`); errors++; continue; }
+      if (SqlEngine.evaluate(r, pseudo) !== 'pass') { console.log(`ERROR ${p.id}: reference does not self-validate`); errors++; }
+    }
+    for (const m of p.models || []) {
+      const res = SqlEngine.runOnFresh([setup, `SELECT COUNT(*) FROM ${m}`]);
+      if (!res) { console.log(`ERROR ${p.id}: model '${m}' is not built by setupFrom`); errors++; }
+    }
+  }
+
+  console.log(`\n${lessons} lessons (${uncovered} without a reference), ${exercises} exercises (${refChecked} with _ref checks), ${translations} dialect translations, ${INTERVIEW_BANK.length} interview problems: ${errors} errors, ${warnings} warnings`);
   process.exit(errors ? 1 : 0);
 })();

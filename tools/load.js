@@ -21,7 +21,8 @@ function loadCourse() {
     : null;
   const SqlExplain = opt('explain.js', 'SqlExplain', { SqlEngine, schemas });
   const DialectCheck = opt('dialect.js', 'DialectCheck', {});
-  return { ROOT, read, curriculum, schemas, LESSON_REFS, SqlEngine, SqlExplain, DialectCheck };
+  const INTERVIEW_BANK = opt('interview-bank.js', 'INTERVIEW_BANK', {}) || [];
+  return { ROOT, read, curriculum, schemas, LESSON_REFS, SqlEngine, SqlExplain, DialectCheck, INTERVIEW_BANK };
 }
 
 async function initSql() {
