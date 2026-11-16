@@ -21,6 +21,21 @@ let queriesRun = 0, hintsUsed = 0, errorsMade = 0;
 let combo = 0, bestCombo = 0;
 let unlockedAchievements = new Set();
 let dailyDoneDates = [];           // ISO dates on which the daily challenge was completed
+let activeDates = [];              // ISO dates with any completed lesson/exercise (drives the week lamps)
+
+// Interface icons (inline SVG, so the app stays offline and themeable).
+const ICONS = (() => {
+  const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  return {
+    sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+    moon: svg('<path d="M20.5 13.2A8.5 8.5 0 1 1 10.8 3.5a6.6 6.6 0 0 0 9.7 9.7z"/>'),
+    sound: svg('<path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
+    mute: svg('<path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>'),
+    keys: svg('<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9"/>'),
+    trophy: svg('<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>'),
+    flame: svg('<path d="M12 21.5c3.9 0 6.5-2.7 6.5-6.3 0-2.6-1.5-4.4-2.6-6.2-.9 1.5-1.7 2.3-2.7 2.6.2-3-.9-5.8-3.7-8.6.1 3.6-4 5.6-4 11.6 0 4 2.6 6.9 6.5 6.9z"/>')
+  };
+})();
 let soundOn = localStorage.getItem('sql_bootcamp_sound') !== 'off';
 
 const PROGRESS_KEY = 'sql_bootcamp_progress';
@@ -30,7 +45,7 @@ const QUERY_HISTORY_KEY = 'sql_bootcamp_query_history';
 // Bump APP_VERSION and version.json together on every release. The app is
 // offline-first; the update check is a best-effort network call that fails
 // silently when offline.
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const REPO_URL = 'https://github.com/HaseebNain/slq-trainer';
 const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/HaseebNain/slq-trainer/master/version.json';
 
@@ -146,7 +161,7 @@ function playSound(type) {
 function toggleSound() {
   soundOn = !soundOn;
   localStorage.setItem('sql_bootcamp_sound', soundOn ? 'on' : 'off');
-  document.getElementById('sound-btn').textContent = soundOn ? '🔊' : '🔇';
+  document.getElementById('sound-btn').innerHTML = soundOn ? ICONS.sound : ICONS.mute;
   if (soundOn) playSound('exercise');
 }
 
@@ -207,7 +222,7 @@ function levelForXp(x) {
 }
 function updateXPDisplay() {
   const lvl = levelForXp(xp);
-  document.getElementById('xp-display').textContent = `⚡ ${xp.toLocaleString()}`;
+  document.getElementById('xp-display').textContent = `${xp.toLocaleString()} XP`;
   document.getElementById('level-badge').textContent = lvl + 1;
   document.getElementById('level-title').textContent = LEVELS[lvl].title;
   const cur = LEVELS[lvl].xp;
@@ -285,6 +300,7 @@ function bumpStreak() {
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   streak = (lastActiveDate === yesterday) ? streak + 1 : 1;
   lastActiveDate = today;
+  if (!activeDates.includes(today)) activeDates = activeDates.concat(today).slice(-120);
   updateStreakDisplay();
   if (streak > 1) showToast('🔥', 'Streak', `${streak}-day streak!`, 'Come back tomorrow to keep it alive.');
 }
@@ -295,7 +311,7 @@ function updateStreakDisplay() {
   const alive = lastActiveDate === today || lastActiveDate === yesterday;
   const shown = alive ? streak : 0;
   const el = document.getElementById('streak-pill');
-  el.textContent = `🔥 ${shown}`;
+  el.innerHTML = `${ICONS.flame}<span>${shown}</span>`;
   el.className = 'streak-pill' + (shown >= 2 ? ' hot' : '');
 }
 
@@ -383,8 +399,10 @@ function openCareerModal() {
   openModal(html);
 }
 
-function openModal(html) {
-  document.getElementById('modal-box').innerHTML = html;
+function openModal(html, opts) {
+  const box = document.getElementById('modal-box');
+  box.className = 'modal' + (opts && opts.wide ? ' wide' : '');
+  box.innerHTML = html;
   const overlay = document.getElementById('modal-overlay');
   overlay.classList.remove('hidden');
   overlay.onclick = e => { if (e.target === overlay) closeModal(); };
@@ -406,8 +424,8 @@ function getDailyChallenge() {
 function isDailyDone() { return dailyDoneDates.includes(todayStr()); }
 function updateDailyBtn() {
   const btn = document.getElementById('daily-btn');
-  if (isDailyDone()) { btn.className = 'daily-btn done'; btn.textContent = '✓ Daily done'; }
-  else { btn.className = 'daily-btn'; btn.textContent = '🎯 Daily ×2'; }
+  if (isDailyDone()) { btn.className = 'daily-btn done'; btn.textContent = 'Daily done'; }
+  else { btn.className = 'daily-btn'; btn.textContent = 'Daily challenge'; }
 }
 function startDailyChallenge() {
   const dc = getDailyChallenge();
@@ -774,6 +792,7 @@ function saveProgress() {
     queriesRun, hintsUsed, errorsMade, bestCombo,
     unlockedAchievements: [...unlockedAchievements],
     dailyDoneDates,
+    activeDates,
     translationsDone: [...translationsDone]
   }));
 }
@@ -794,6 +813,9 @@ function loadProgress() {
     if (Array.isArray(data.unlockedAchievements)) unlockedAchievements = new Set(data.unlockedAchievements);
     if (Array.isArray(data.dailyDoneDates)) dailyDoneDates = data.dailyDoneDates;
     if (Array.isArray(data.translationsDone)) translationsDone = new Set(data.translationsDone);
+    // Saves from before v1.2 have no day-by-day record: start from what's known.
+    activeDates = Array.isArray(data.activeDates) ? data.activeDates
+      : [...new Set(dailyDoneDates.concat(lastActiveDate ? [lastActiveDate] : []))].sort();
     return data.currentLessonId || null;
   } catch { return null; }
 }
@@ -809,6 +831,7 @@ function resetProgress() {
   combo = 0; bestCombo = 0;
   unlockedAchievements = new Set();
   dailyDoneDates = [];
+  activeDates = [];
   translationsDone = new Set();
   if (typeof Interview !== 'undefined') Interview.reset();
   updateXPDisplay();
@@ -1268,7 +1291,9 @@ async function initDB() {
   updateStreakDisplay();
   updateComboDisplay();
   updateDailyBtn();
-  document.getElementById('sound-btn').textContent = soundOn ? '🔊' : '🔇';
+  document.getElementById('sound-btn').innerHTML = soundOn ? ICONS.sound : ICONS.mute;
+  document.getElementById('ach-btn').innerHTML = ICONS.trophy;
+  document.getElementById('keys-btn').innerHTML = ICONS.keys;
   updateThemeButton();
   const verLabel = document.getElementById('ver-label');
   if (verLabel) verLabel.textContent = `v${APP_VERSION}`;
@@ -1276,6 +1301,7 @@ async function initDB() {
   const startLesson = (savedLessonId && allLessons.find(l => l.id === savedLessonId)) || allLessons[0];
   loadLesson(startLesson);
   if (!savedLessonId && completedLessons.size === 0) showWelcome();
+  else if (localStorage.getItem('sql_bootcamp_today_seen') !== todayStr()) openToday();
   // Best-effort update check (offline-safe, non-blocking).
   if (typeof navigator === 'undefined' || navigator.onLine !== false) {
     checkForUpdate({ silent: true }).catch(() => {});
@@ -1316,12 +1342,12 @@ function jumpToDay(idx) {
 }
 
 const COURSE_SECTIONS = [
-  { label: 'Foundations', from: 1, to: 7 },
-  { label: 'Working with Real Data', from: 8, to: 16 },
-  { label: 'Analytics Engineering', from: 17, to: 21 },
-  { label: 'Data Engineer Track', from: 22, to: 28 },
-  { label: 'Warehouse Dialects — Snowflake & BigQuery', from: 29, to: 31 },
-  { label: 'Capstone — The Plant-Floor Warehouse', from: 32, to: 99 }
+  { label: 'Foundations', short: 'Foundations', from: 1, to: 7 },
+  { label: 'Working with real data', short: 'Real data', from: 8, to: 16 },
+  { label: 'Analytics engineering', short: 'Analytics', from: 17, to: 21 },
+  { label: 'Data engineering', short: 'Engineering', from: 22, to: 28 },
+  { label: 'Snowflake and BigQuery dialects', short: 'Dialects', from: 29, to: 31 },
+  { label: 'Capstone: the plant-floor warehouse', short: 'Capstone', from: 32, to: 99 }
 ];
 
 function openCourseMap() {
@@ -1365,7 +1391,7 @@ function toggleTheme() {
 }
 function updateThemeButton() {
   const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️';
+  if (btn) btn.innerHTML = document.documentElement.dataset.theme === 'light' ? ICONS.moon : ICONS.sun;
 }
 
 // ── Keyboard shortcuts ──
@@ -1397,6 +1423,124 @@ function openShortcuts() {
     ${rows.map(([label, keys]) => `<div class="shortcut-row"><span>${label}</span><span class="shortcut-keys">${keys.map(k => `<span class="kbd">${k}</span>`).join('')}</span></div>`).join('')}`);
 }
 
+// ── Today: the screen you come back to ──
+// Streak lamps for this week, the next lesson, the daily challenge, level and
+// stage progress. Opens once a day on load, and any time from the logo.
+// The last seven days, oldest first, ending today — so a streak is always
+// visible as a run of lamps leading up to today's.
+function weekDates() {
+  const t = new Date(todayStr() + 'T00:00:00Z').getTime();
+  return Array.from({ length: 7 }, (_, i) => new Date(t - (6 - i) * 86400000).toISOString().slice(0, 10));
+}
+function nextLessonToDo() {
+  const all = curriculum.flatMap(d => d.lessons);
+  if (currentLesson && !completedLessons.has(currentLesson.id)) return currentLesson;
+  const from = currentLesson ? all.indexOf(currentLesson) : -1;
+  return all.slice(from + 1).find(l => !completedLessons.has(l.id)) || all.find(l => !completedLessons.has(l.id)) || null;
+}
+function continueLesson(id) {
+  const l = curriculum.flatMap(d => d.lessons).find(x => x.id === id);
+  closeModal();
+  if (l) loadLesson(l);
+  if (editor) editor.focus();
+}
+function jumpToSection(i) {
+  const s = COURSE_SECTIONS[i];
+  const days = curriculum.filter(d => d.day >= s.from && d.day <= s.to);
+  const target = days.find(d => d.lessons.some(l => !completedLessons.has(l.id))) || days[0];
+  if (target) jumpToDay(curriculum.indexOf(target));
+}
+
+function openToday() {
+  const today = todayStr();
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const activeToday = lastActiveDate === today;
+  const alive = activeToday || lastActiveDate === yesterday;
+  const shown = alive ? streak : 0;
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const lamps = weekDates().map(d =>
+    `<div class="lamp${activeDates.includes(d) ? ' on' : ''}${d === today ? ' today' : ''}"><div class="lamp-light"></div><div class="lamp-day">${d === today ? 'Today' : names[new Date(d + 'T00:00:00Z').getUTCDay()]}</div></div>`).join('');
+
+  const title = activeToday ? "You've put in work today." : shown ? `Day ${shown + 1} starts with one query.` : 'Pick up where you left off.';
+  const sub = activeToday ? 'Stopping here is fine. One more lesson is better.'
+    : shown ? `Finish anything today to keep your ${shown}-day streak.`
+    : 'Finish one lesson today and the first lamp goes on.';
+
+  const next = nextLessonToDo();
+  let nextCard;
+  if (next) {
+    const day = curriculum.find(d => d.lessons.includes(next));
+    nextCard = `<div class="today-card today-next">
+      <div class="today-card-kicker"><span>Next up — day ${day.day}, ${escapeHtml(day.title)}</span><span>${next.xp} XP</span></div>
+      <div class="today-next-title">${next.title}</div>
+      <div class="today-next-task">${stripTags(next.task)}</div>
+      <button class="btn btn-primary" onclick="continueLesson('${next.id}')">${completedLessons.size ? 'Continue' : 'Start'} this lesson</button>
+      <div class="today-day">
+        <span>Day ${day.day}: ${day.lessons.filter(l => completedLessons.has(l.id)).length} of ${day.lessons.length} lessons done</span>
+        <div class="today-day-dots">${day.lessons.map(l => `<i class="${completedLessons.has(l.id) ? 'done' : l === next ? 'cur' : ''}" title="${escapeHtml(l.title)}"></i>`).join('')}</div>
+      </div>
+    </div>`;
+  } else {
+    nextCard = `<div class="today-card today-next">
+      <div class="today-card-kicker"><span>Course complete</span><span>${totalLessonCount()} lessons</span></div>
+      <div class="today-next-title">Every lesson is done. Now make it automatic.</div>
+      <div class="today-next-task">Interviews reward speed and explanation, not just correctness. A timed mock interview is the best practice left.</div>
+      <button class="btn btn-primary" onclick="closeModal(); openInterview()">Start a mock interview</button>
+    </div>`;
+  }
+
+  const dc = getDailyChallenge();
+  const dailyCard = dc ? `<div class="today-card">
+      <div class="today-card-kicker"><span>Daily challenge</span><span>${isDailyDone() ? 'done' : 'double XP'}</span></div>
+      <div class="today-card-text">${stripTags(dc.ex.prompt)}</div>
+      ${isDailyDone() ? '' : `<button class="btn btn-ghost" onclick="closeModal(); startDailyChallenge()">Take today's challenge</button>`}
+    </div>` : '';
+
+  const lvl = levelForXp(xp);
+  const nextLvl = LEVELS[lvl + 1];
+  const lvlPct = nextLvl ? Math.round(100 * (xp - LEVELS[lvl].xp) / (nextLvl.xp - LEVELS[lvl].xp)) : 100;
+  const levelCard = `<div class="today-card">
+      <div class="today-card-kicker"><span>Level ${lvl + 1}</span><span>${xp.toLocaleString()} XP</span></div>
+      <div class="today-card-title">${LEVELS[lvl].title}</div>
+      <div class="today-level-bar"><div style="width:${lvlPct}%"></div></div>
+      <div class="today-card-text">${nextLvl ? `${(nextLvl.xp - xp).toLocaleString()} XP to ${nextLvl.title}` : 'Top level reached.'}</div>
+    </div>`;
+
+  const iv = typeof Interview !== 'undefined' ? Interview.stats() : { count: 0, best: 0 };
+  const interviewCard = `<div class="today-card">
+      <div class="today-card-kicker"><span>Mock interview</span><span>${iv.count ? `best ${iv.best}/100` : 'not tried yet'}</span></div>
+      <div class="today-card-text">${iv.count ? `${iv.count} done. Fifteen minutes is enough for two problems and their follow-ups.` : 'Two timed problems, follow-up questions and a scorecard in fifteen minutes.'}</div>
+      <button class="btn btn-ghost" onclick="closeModal(); openInterview()">Start an interview</button>
+    </div>`;
+
+  const currentDayNum = curriculum[currentDay] ? curriculum[currentDay].day : 1;
+  const pipeline = COURSE_SECTIONS.map((s, i) => {
+    const lessons = curriculum.filter(d => d.day >= s.from && d.day <= s.to).flatMap(d => d.lessons);
+    if (!lessons.length) return '';
+    const done = lessons.filter(l => completedLessons.has(l.id)).length;
+    const cur = currentDayNum >= s.from && currentDayNum <= s.to;
+    return `<button class="pipe-stage${cur ? ' current' : ''}" onclick="jumpToSection(${i})" title="${escapeHtml(s.label)}">
+      <div class="pipe-bar"><div style="width:${Math.round(100 * done / lessons.length)}%"></div></div>
+      <div class="pipe-name">${s.short}</div><div class="pipe-count">${done}/${lessons.length}</div></button>`;
+  }).join('');
+
+  try { localStorage.setItem('sql_bootcamp_today_seen', today); } catch {}
+  openModal(`
+    <div class="today-head">
+      <div><div class="today-title">${title}</div><div class="today-sub">${sub}</div></div>
+      <button class="modal-close" onclick="closeModal()" aria-label="Close">✕</button>
+    </div>
+    <div class="andon${shown ? ' alive' : ''}">
+      <div class="andon-count"><div class="andon-num">${shown}</div><div class="andon-label">day streak</div></div>
+      <div class="andon-lamps">${lamps}</div>
+    </div>
+    <div class="today-grid">
+      ${nextCard}
+      <div class="today-side">${dailyCard}${levelCard}${interviewCard}</div>
+    </div>
+    <div class="pipeline">${pipeline}</div>`, { wide: true });
+}
+
 // ── First-run welcome ──
 function showWelcome() {
   openModal(`
@@ -1413,26 +1557,44 @@ function showWelcome() {
       <div class="welcome-feat"><span class="welcome-feat-icon">🔎</span><div><div class="welcome-feat-name">It tells you why</div><div class="welcome-feat-desc">A wrong answer gets a diagnosis — missing rows, a join fan-out, a rounding slip — not just a red X. No AI required.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">🎤</span><div><div class="welcome-feat-name">Mock interviews</div><div class="welcome-feat-desc">Timed problems with follow-ups and a scorecard — solo, or with an AI interviewer running on your own machine.</div></div></div>
     </div>
-    <button class="welcome-cta" onclick="closeModal()">Start Day 1 →</button>`);
+    <button class="welcome-cta" onclick="closeModal()">Start day 1</button>`);
 }
 
+// The sidebar is a route: days are stations on a line, grouped by stage.
+// A station's ring fills as its lessons are finished; the current one is amber.
 function buildSidebar() {
   const sb = document.getElementById('sidebar');
+  const scrollTop = sb.scrollTop;
   sb.innerHTML = '';
+  let lastSection = null;
   curriculum.forEach((day, di) => {
+    const section = COURSE_SECTIONS.find(s => day.day >= s.from && day.day <= s.to) || null;
+    const peers = section ? curriculum.filter(d => d.day >= section.from && d.day <= section.to) : [day];
+    if (section && section !== lastSection) {
+      lastSection = section;
+      const lessons = peers.flatMap(d => d.lessons);
+      const done = lessons.filter(l => completedLessons.has(l.id)).length;
+      const head = document.createElement('div');
+      head.className = 'rail-section' + (done === lessons.length ? ' complete' : '');
+      head.innerHTML = `<span>${section.label}</span><span class="rail-section-count">${done}/${lessons.length}</span>`;
+      sb.appendChild(head);
+    }
+
     const doneCount = day.lessons.filter(l => completedLessons.has(l.id)).length;
     const allDone = doneCount === day.lessons.length;
     const isOpen = di === currentDay;
 
     const group = document.createElement('div');
-    group.className = 'day-group' + (isOpen ? ' open' : '');
+    group.className = 'day-group' + (isOpen ? ' open' : '') + (allDone ? ' complete' : '') +
+      (peers[0] === day ? ' first-in-section' : '') + (peers[peers.length - 1] === day ? ' last-in-section' : '');
 
     const header = document.createElement('div');
     header.className = 'day-group-header';
+    header.title = `Day ${day.day} — ${day.title}`;
     header.innerHTML = `
-      <span class="day-group-caret">▶</span>
-      <span class="day-group-name">Day ${day.day} · ${day.title}</span>
-      <span class="day-group-count${allDone ? ' done' : ''}">${allDone ? '✓' : `${doneCount}/${day.lessons.length}`}</span>`;
+      <span class="rail-node${allDone ? ' done' : ''}${isOpen ? ' current' : ''}" style="--p:${Math.round(100 * doneCount / day.lessons.length)}">${allDone ? '✓' : day.day}</span>
+      <span class="day-group-name">${day.title}</span>
+      <span class="day-group-count">${allDone ? '' : `${doneCount}/${day.lessons.length}`}</span>`;
     header.onclick = () => group.classList.toggle('open');
     group.appendChild(header);
 
@@ -1444,7 +1606,7 @@ function buildSidebar() {
       const active = currentLesson && currentLesson.id === lesson.id;
       item.className = 'lesson-item' + (active ? ' active' : '');
       item.innerHTML = `
-        <div class="lesson-dot ${done ? 'done' : active ? 'active' : ''}">${done ? '✓' : lesson.id}</div>
+        <div class="lesson-dot ${done ? 'done' : active ? 'active' : ''}"></div>
         <div class="lesson-title-text">${lesson.title}</div>`;
       item.onclick = () => { currentDay = di; loadLesson(lesson); };
       list.appendChild(item);
@@ -1452,6 +1614,13 @@ function buildSidebar() {
     group.appendChild(list);
     sb.appendChild(group);
   });
+  // Keep the reader's place; bring the current day into view if it isn't.
+  sb.scrollTop = scrollTop;
+  const open = sb.querySelector('.day-group.open');
+  if (open) {
+    const top = open.offsetTop - sb.offsetTop, bottom = top + open.offsetHeight;
+    if (top < sb.scrollTop || bottom > sb.scrollTop + sb.clientHeight) sb.scrollTop = Math.max(0, top - 60);
+  }
   updateSidebarProgress();
 }
 
@@ -1461,7 +1630,7 @@ function updateSidebarProgress() {
   const fill = document.getElementById('sidebar-progress-fill');
   const count = document.getElementById('sidebar-progress-count');
   if (fill) fill.style.width = pct + '%';
-  if (count) count.textContent = `${completedLessons.size}/${total} · ${pct}%`;
+  if (count) count.textContent = `${completedLessons.size} of ${total} lessons`;
 }
 
 function loadLesson(lesson) {
@@ -1485,21 +1654,23 @@ function loadLesson(lesson) {
   document.getElementById('exercise-bar').style.display = 'none';
 
   document.getElementById('lesson-panel').innerHTML = `
-    <div class="lesson-breadcrumb">Day ${dayData.day}: ${dayData.title} › Lesson ${lesson.id}</div>
+    <div class="lesson-meta">
+      <span class="lesson-meta-day">Day ${dayData.day}</span>
+      <span>${dayData.title}</span>
+      <span>Lesson ${dayData.lessons.indexOf(lesson) + 1} of ${dayData.lessons.length}</span>
+      <span class="lesson-meta-xp${completedLessons.has(lesson.id) ? ' earned' : ''}">${completedLessons.has(lesson.id) ? '✓ ' : ''}${lesson.xp} XP</span>
+    </div>
     <div class="lesson-heading">${lesson.title}</div>
     <div class="lesson-body">${lesson.theory}</div>
     <div class="concept-chips">${lesson.chips.map(c => `<span class="chip ${c.c}">${c.t}</span>`).join('')}</div>
     <div class="task-box">
-      <div class="task-label">${lesson.translate ? 'Step 1 · SQLite — graded for real' : 'Your Task'}</div>
+      <div class="task-label">${lesson.translate ? 'Step 1: solve it in SQLite' : 'Your task'}</div>
       <div class="task-text">${lesson.task}</div>
     </div>
     ${lesson.liveSetup ? `<div class="prebuilt-note${prepared ? '' : ' failed'}">${prepared
       ? (lessonModels(lesson).length ? `◆ Pre-built for this lesson: ${lessonModels(lesson).map(m => `<code>${m}</code>`).join(', ')} — the official versions of earlier models, so a slip on a previous day can't follow you here. ` : '') + `This lesson's own target is dropped each time you open it; <strong>↺ Reset data</strong> restores this state.`
       : `Couldn't prepare this lesson's models — press <strong>↺ Reset data</strong> and reopen the lesson.`}</div>` : ''}
     <div id="translate-panel"></div>
-    <div class="progress-note">${completedLessons.size}/${total} lessons complete · ${pct}% to Data Engineer</div>
-    <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-    ${!isDailyDone() ? `<div class="daily-banner">🎯<span><strong>Daily Challenge</strong> waiting — double XP and it keeps your 🔥 streak alive. <a href="#" onclick="startDailyChallenge();return false" style="color:var(--purple)">Take it on →</a></span></div>` : ''}
     <div id="exercises-list"></div>
   `;
 
@@ -1737,7 +1908,7 @@ function updateRunButton() {
   const btn = document.querySelector('.editor-buttons .btn-primary');
   if (!btn) return;
   const tr = translateMode !== null && currentLesson && currentLesson.translate ? currentLesson.translate[translateMode] : null;
-  btn.textContent = tr ? `✓ Check ${DialectCheck.labelFor(tr)}` : '▶ Run Query';
+  btn.textContent = tr ? `Check ${DialectCheck.labelFor(tr)}` : 'Run query';
   btn.classList.toggle('checking', !!tr);
   const wrap = document.getElementById('sql-editor-wrap');
   if (wrap) wrap.classList.toggle('translating', !!tr);
@@ -1752,7 +1923,7 @@ function startTranslation(i) {
   const tr = lesson.translate[i];
   renderTranslatePanel();
   showFeedback('info', `Translate to ${DialectCheck.labelFor(tr)}`,
-    `${tr.prompt}<div class="tr-howto">Edit the query in the editor into ${DialectCheck.labelFor(tr)} syntax, then press <strong>✓ Check</strong> (or Ctrl+Enter). It won't be executed — the check looks for the right constructs.</div>`);
+    `${tr.prompt}<div class="tr-howto">Edit the query in the editor into ${DialectCheck.labelFor(tr)} syntax, then press <strong>Check</strong> (or Ctrl+Enter). It won't be executed — the check looks for the right constructs.</div>`);
   document.getElementById('row-count').style.display = 'none';
   if (editor) editor.focus();
 }

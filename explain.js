@@ -383,7 +383,9 @@ const SqlExplain = (function () {
     // 5. Row-level problems (judged on the columns both results share).
     if (diff.missing.length || diff.extra.length) {
       kind = 'rows';
-      const fanOut = !diff.missing.length && diff.extra.length && diff.surplusCopies === diff.extra.length;
+      // Surplus copies of correct rows only mean a fan-out if the query joins;
+      // without a join it is a missing GROUP BY / DISTINCT (see shapeHint).
+      const fanOut = !diff.missing.length && diff.extra.length && diff.surplusCopies === diff.extra.length && /\bjoin\b/i.test(candidateSql);
       if (fanOut) {
         kind = 'duplicates';
         headline = `${plural(diff.extra.length, 'duplicated row')} — a join is fanning out`;

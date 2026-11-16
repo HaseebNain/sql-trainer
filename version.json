@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
-  "notes": "Wrong-answer explainer, Snowflake/BigQuery dialect track, the plant-floor warehouse capstone (Days 29-39), mock interviews, and local-model support for the AI tutor.",
+  "version": "1.2.0",
+  "notes": "New look: the Andon refresh. A Today screen with your streak and what to do next, a route-style sidebar, new type and colour.",
   "url": "https://github.com/HaseebNain/sql-trainer"
 }

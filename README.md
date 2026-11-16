@@ -57,7 +57,9 @@ You profile it, build staging views, convert units, quarantine bad rows, model d
 
 ## The App
 
-- **Fully offline** — CodeMirror and sql.js are vendored in `vendor/`; the SQLite WASM binary is embedded as base64 so it loads even from `file://`. The Google Fonts link is a progressive enhancement only.
+- **Fully offline** — CodeMirror and sql.js are vendored in `vendor/`; the SQLite WASM binary is embedded as base64 so it loads even from `file://`. The fonts (Bricolage Grotesque, IBM Plex Sans and Mono — SIL OFL) are bundled in `vendor/fonts/` too, so nothing is fetched from the network.
+- **Today** — the screen you come back to: a lamp for each of the last seven days, your streak, the next lesson, the daily challenge, and progress through the six stages of the course. It opens once a day; click the logo to see it any time.
+- **Your route** — the sidebar shows the course as stations on a line, grouped by stage; a station's ring fills as you finish its lessons.
 - **It tells you *why* a query is wrong** — a wrong answer gets a diagnosis instead of a red X: "2 expected rows are missing — all with NULL in `manager`: an INNER JOIN drops them", a join fan-out, right rows in the wrong order, a missing `ROUND`, integer division, ×100, `SELECT *` instead of named columns. Deterministic, **no AI involved** (see below).
 - **Mock interviews** 🎤 — timed problems from a graded bank (SQL screen, data engineering, or mixed), follow-up questions, and a scorecard with a review list. Run it **solo** (scripted follow-ups, model answers to rate yourself against) or with an **AI interviewer**.
 - **AI Tutor & interviewer — on a local model if you like** — optional, and not tied to a subscription. Point it at any OpenAI-compatible local server (**Ollama**, **LM Studio**, llama.cpp, Jan) for a free, offline tutor, or at the Anthropic API with your own key. The AI is never asked whether your SQL is correct; the engine decides that.
