@@ -6,7 +6,9 @@ const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+// All files that build UI: handlers and ids may be defined in any of them.
+const UI_FILES = ['app.js', 'ai.js', 'interview.js'];
+const app = UI_FILES.filter(f => fs.existsSync(path.join(root, f))).map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
 const all = html + '\n' + app;
 
 let errors = 0;
@@ -16,7 +18,14 @@ const handlerRefs = new Set();
 for (const m of all.matchAll(/on(?:click|keydown|change|input)="([a-zA-Z_$][\w$]*)\s*\(/g)) handlerRefs.add(m[1]);
 for (const fn of handlerRefs) {
   const defined = new RegExp(`(function\\s+${fn}\\s*\\(|(?:const|let|var)\\s+${fn}\\s*=)`).test(app) || ['event', 'if'].includes(fn);
-  if (!defined) { console.log(`ERROR: handler ${fn}() referenced but not defined in app.js`); errors++; }
+  if (!defined) { console.log(`ERROR: handler ${fn}() referenced but not defined in ${UI_FILES.join(' / ')}`); errors++; }
+}
+
+// 1b. Namespaced handlers — onclick="Interview.next()" — must be exported by
+//     that module (listed in its `return { … }`).
+for (const m of all.matchAll(/on(?:click|keydown|change|input)="[^"]*?\b(Interview|AI)\.([a-zA-Z_$][\w$]*)\s*\(/g)) {
+  const exported = new RegExp(`return\\s*\\{[^}]*\\b${m[2]}\\b[^}]*\\}`).test(app);
+  if (!exported) { console.log(`ERROR: ${m[1]}.${m[2]}() referenced in markup but not exported`); errors++; }
 }
 
 // 2. getElementById targets must exist as id="..." in static HTML or in a

@@ -2,12 +2,18 @@
 
 let db = null, currentLesson = null, currentDay = 0;
 let xp = 0, completedLessons = new Set(), aiMessages = [], activeTab = 'results';
-let anthropicApiKey = localStorage.getItem('sql_bootcamp_api_key') || '';
 let lastResults = null;
 let editor = null;
 let currentExercise = null;
 let completedExercises = new Set();
 let queryHistory = [];
+
+// Dialect lessons are two-step (SQLite for real, then a structural check of
+// the Snowflake/BigQuery translation). Finished steps are remembered as
+// "<lessonId>:sqlite" and "<lessonId>:<translateIndex>".
+let translationsDone = new Set();
+let translateMode = null;          // index into currentLesson.translate while translating, else null
+let lastDiagnosis = '';            // plain-text summary of the latest wrong-answer explanation (AI tutor context)
 
 // ── Gamification state ──
 let streak = 0, lastActiveDate = null;
@@ -24,11 +30,12 @@ const QUERY_HISTORY_KEY = 'sql_bootcamp_query_history';
 // Bump APP_VERSION and version.json together on every release. The app is
 // offline-first; the update check is a best-effort network call that fails
 // silently when offline.
-const APP_VERSION = '1.0.5';
+const APP_VERSION = '1.1.0';
 const REPO_URL = 'https://github.com/HaseebNain/slq-trainer';
 const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/HaseebNain/slq-trainer/master/version.json';
 
-// ── Levels (calibrated to ~3,950 XP available, before combo/daily bonuses) ──
+// ── Levels (calibrated to ~7,000 XP available across all 39 days, before
+// combo / daily / interview bonuses) ──
 const LEVELS = [
   { xp: 0,    title: "Row Rookie" },
   { xp: 60,   title: "SELECT Apprentice" },
@@ -44,7 +51,9 @@ const LEVELS = [
   { xp: 3200, title: "Data Engineer" },
   { xp: 3900, title: "Staff Data Engineer" },
   { xp: 4700, title: "Analytics Engineer" },
-  { xp: 5500, title: "Principal Data Engineer" }
+  { xp: 5500, title: "Principal Data Engineer" },
+  { xp: 6400, title: "Warehouse Architect" },
+  { xp: 7400, title: "Distinguished Data Engineer" }
 ];
 
 // ── Achievements ──
@@ -75,6 +84,12 @@ const ACHIEVEMENTS = [
   { id:"pipeline-pro",  icon:"🔄", name:"Pipeline Pro",         desc:"Complete Days 26 and 27 — incremental loads and data quality.", when:() => dayComplete(26) && dayComplete(27) },
   { id:"gauntlet",      icon:"⚔️", name:"Interview Slayer",     desc:"Complete Day 28 — the interview gauntlet.",          when:() => dayComplete(28) },
   { id:"architect",     icon:"🏛️", name:"Data Architect",       desc:"Complete the entire Data Engineer track (Days 22–28).", when:() => [22,23,24,25,26,27,28].every(dayComplete) },
+  { id:"polyglot",      icon:"🗣️", name:"Polyglot",             desc:"Complete Days 29–31 — Snowflake and BigQuery dialects.", when:() => [29,30,31].every(dayComplete) },
+  { id:"mess-tamer",    icon:"🧽", name:"Mess Tamer",           desc:"Complete Days 32–34 — profile, stage and quarantine the raw plant data.", when:() => [32,33,34].every(dayComplete) },
+  { id:"wh-builder",    icon:"🏭", name:"Warehouse Builder",    desc:"Complete Days 35–37 — dimensions, facts and the incremental load.", when:() => [35,36,37].every(dayComplete) },
+  { id:"shipped",       icon:"🚢", name:"Shipped It",           desc:"Finish the capstone — the whole plant-floor warehouse (Days 32–39).", when:() => [32,33,34,35,36,37,38,39].every(dayComplete) },
+  { id:"interview-1",   icon:"🎤", name:"In the Hot Seat",      desc:"Finish your first mock interview.",                   when:() => typeof Interview !== 'undefined' && Interview.stats().count >= 1 },
+  { id:"hire-signal",   icon:"🤝", name:"Strong Hire",          desc:"Score 85 or higher in a mock interview.",             when:() => typeof Interview !== 'undefined' && Interview.stats().best >= 85 },
 ];
 
 // ── Career readiness: map curriculum days to data-engineer job skills ──
@@ -89,7 +104,9 @@ const SKILL_TRACKS = [
   { name:"Modeling & DDL",          icon:"🏗️", days:[22,23,24],     blurb:"CREATE TABLE, views, star schemas, facts & dims — how warehouses are actually structured." },
   { name:"Performance Tuning",      icon:"⚙️", days:[25],           blurb:"Indexes, EXPLAIN QUERY PLAN, sargable predicates — why queries are slow and how to fix them." },
   { name:"ELT & Data Quality",      icon:"🔄", days:[26,27],        blurb:"Incremental loads, upserts, SCD2, dedup, and dbt-style data tests — the daily job of a DE." },
-  { name:"Interview Readiness",     icon:"⚔️", days:[28],           blurb:"Top-N per group, gaps & islands, dedup classics — the exact patterns interviewers ask." }
+  { name:"Interview Readiness",     icon:"⚔️", days:[28],           blurb:"Top-N per group, gaps & islands, dedup classics — the exact patterns interviewers ask." },
+  { name:"Warehouse Dialects",      icon:"🗣️", days:[29,30,31],     blurb:"QUALIFY, MERGE, UNNEST / FLATTEN, date functions — writing the same query for Snowflake and BigQuery." },
+  { name:"Warehouse Build (Capstone)", icon:"🏭", days:[32,33,34,35,36,37,38,39], blurb:"Raw → staging → dims & facts → marts on messy plant-floor data, with an incremental load and data tests. The actual job." }
 ];
 
 function totalLessonCount()  { return curriculum.reduce((n, d) => n + d.lessons.length, 0); }
@@ -540,12 +557,13 @@ function renderQuizQuestion() {
   const item = quizItems[quizIndex];
   const pct = Math.round((quizIndex / n) * 100);
   // Show the schema (columns) for each table in play so it's answerable without
-  // leaving the quiz — the modal has no schema panel to click into.
-  const schema = item.tables.map(t => {
+  // leaving the quiz — the modal has no schema panel to click into. Capstone
+  // lessons also list the pre-built models they query.
+  const schema = item.tables.concat(lessonModels(item.lesson)).map(t => {
     const s = schemas[t];
-    if (!s) return '';
-    const cols = s.cols.map(c => `<span class="quiz-col" title="${c.type}${c.pk ? ' · primary key' : ''}">${c.name}</span>`).join('');
-    return `<div class="quiz-schema-row"><span class="quiz-schema-name">${t}</span><span class="quiz-schema-cols">${cols}</span></div>`;
+    const cols = (s ? s.cols.map(c => `<span class="quiz-col" title="${c.type}${c.pk ? ' · primary key' : ''}">${c.name}</span>`)
+                    : modelColumns(item.lesson, t).map(c => `<span class="quiz-col">${c}</span>`)).join('');
+    return cols ? `<div class="quiz-schema-row"><span class="quiz-schema-name">${t}</span><span class="quiz-schema-cols">${cols}</span></div>` : '';
   }).join('');
   openModal(`
     <div class="modal-header">
@@ -573,14 +591,22 @@ function checkQuizAnswer() {
   const sql = ta ? ta.value.trim() : '';
   if (!sql) return;
   const item = quizItems[quizIndex];
-  let passed = false, errored = false;
+  let passed = false, errored = false, why = '';
   try {
     if (item.kind === 'lesson') {
       passed = SqlEngine.evaluate(sql, item.lesson) === 'pass';
+      if (!passed) {
+        const d = SqlExplain.diagnose(sql, item.lesson);
+        if (d && d.verdict === 'fail') why = `<strong>${escapeHtml(d.headline)}.</strong> ${d.points[0] || ''}`;
+      }
     } else {
-      const res = SqlEngine.runOnFresh([sql]);   // isolated — never mutates the live DB
+      // Isolated — never mutates the live DB. Capstone exercises run against
+      // the lesson's pre-built models, so replay its setup first.
+      const pre = item.lesson.liveSetup ? item.lesson.setup : null;
+      const res = SqlEngine.runOnFresh([pre, sql]);
       if (!res) errored = true;
       passed = exercisePasses(item.ex, sql, res ? res.columns : [], res ? res.values : []);
+      if (!passed && res) why = SqlExplain.explainValidate(item.ex.validate, res.columns, res.values)[0] || '';
     }
   } catch { errored = true; }
   const fb = document.getElementById('quiz-feedback');
@@ -593,7 +619,7 @@ function checkQuizAnswer() {
       `<button class="btn btn-primary" onclick="nextQuizQuestion()">${last ? 'See results →' : 'Next question →'}</button>`;
   } else {
     playSound('error');
-    fb.innerHTML = `<div class="feedback-box feedback-error"><div class="feedback-label">${errored ? 'SQL error' : 'Not quite'}</div>${errored ? 'That query didn’t run — check the syntax and try again.' : 'That doesn’t produce the expected result. Try again, or take a 💡 hint.'}</div>`;
+    fb.innerHTML = `<div class="feedback-box feedback-error"><div class="feedback-label">${errored ? 'SQL error' : 'Not quite'}</div>${errored ? 'That query didn’t run — check the syntax and try again.' : (why || 'That doesn’t produce the expected result.') + ' Try again, or take a 💡 hint.'}</div>`;
   }
 }
 
@@ -747,7 +773,8 @@ function saveProgress() {
     streak, lastActiveDate,
     queriesRun, hintsUsed, errorsMade, bestCombo,
     unlockedAchievements: [...unlockedAchievements],
-    dailyDoneDates
+    dailyDoneDates,
+    translationsDone: [...translationsDone]
   }));
 }
 
@@ -766,6 +793,7 @@ function loadProgress() {
     if (typeof data.bestCombo === 'number') bestCombo = data.bestCombo;
     if (Array.isArray(data.unlockedAchievements)) unlockedAchievements = new Set(data.unlockedAchievements);
     if (Array.isArray(data.dailyDoneDates)) dailyDoneDates = data.dailyDoneDates;
+    if (Array.isArray(data.translationsDone)) translationsDone = new Set(data.translationsDone);
     return data.currentLessonId || null;
   } catch { return null; }
 }
@@ -781,6 +809,8 @@ function resetProgress() {
   combo = 0; bestCombo = 0;
   unlockedAchievements = new Set();
   dailyDoneDates = [];
+  translationsDone = new Set();
+  if (typeof Interview !== 'undefined') Interview.reset();
   updateXPDisplay();
   updateStreakDisplay();
   updateComboDisplay();
@@ -795,6 +825,7 @@ function loadExerciseByIndex(idx) {
 }
 
 function loadExercise(ex) {
+  if (translateMode !== null) exitTranslation();
   currentExercise = ex;
   if (editor) editor.setValue('');
   showEmpty();
@@ -888,10 +919,23 @@ function creditExercise(ex) {
   }
 }
 
-function exerciseNotQuite() {
-  const existing = document.getElementById('output-content').innerHTML;
-  document.getElementById('output-content').innerHTML =
-    `<div class="feedback-box feedback-info"><div class="feedback-label">Not quite yet</div>Your query ran, but the results don't match the goal. Re-read the prompt — or grab a 💡 hint (costs your combo).</div><hr class="divider">${existing}`;
+function exerciseNotQuite(ex, columns, values) {
+  // Say exactly which expectation the result misses (no AI involved).
+  const why = ex ? SqlExplain.explainValidate(ex.validate, columns, values) : [];
+  lastDiagnosis = why.map(stripTags).join(' ');
+  const body = why.length
+    ? `<ul class="explain-points">${why.map(w => `<li>${w}</li>`).join('')}</ul>`
+    : `Your query ran, but the results don't match the goal. Re-read the prompt — or grab a 💡 hint (costs your combo).`;
+  prependOutput(`<div class="feedback-box feedback-info"><div class="feedback-label">Not quite yet</div>${body}</div>`);
+}
+
+function prependOutput(html) {
+  const box = document.getElementById('output-content');
+  const existing = box.innerHTML;
+  box.innerHTML = html + (existing.includes('empty-state') ? '' : '<hr class="divider">' + existing);
+}
+function stripTags(html) {
+  return String(html).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 // Grade a run against BOTH the active practice exercise AND the lesson's main
@@ -901,8 +945,10 @@ function gradeSubmission(sql, columns, values) {
   const ex = currentExercise;
   const exPassed = ex ? exercisePasses(ex, sql, columns, values) : false;
   if (exPassed) creditExercise(ex);
-  const lessonPassed = checkSolution(sql);
-  if (ex && !exPassed && !lessonPassed) exerciseNotQuite();
+  // While an exercise is selected, a miss is explained in the exercise's own
+  // terms; the lesson-level explainer stays quiet.
+  const lessonPassed = checkSolution(sql, { explain: !ex });
+  if (ex && !exPassed && !lessonPassed) exerciseNotQuite(ex, columns, values);
 }
 
 function renderExercisesList() {
@@ -927,24 +973,6 @@ function renderExercisesList() {
   el.innerHTML = html;
 }
 
-function saveApiKey() {
-  const input = document.getElementById('api-key-input');
-  if (!input) return;
-  anthropicApiKey = input.value.trim();
-  localStorage.setItem('sql_bootcamp_api_key', anthropicApiKey);
-  renderAITab();
-}
-
-function apiKeyStatusHtml() {
-  if (anthropicApiKey && anthropicApiKey.startsWith('sk-ant-')) {
-    return '<div class="ai-key-status ok">✓ API key saved — AI Tutor is live</div>';
-  }
-  if (anthropicApiKey) {
-    return '<div class="ai-key-status missing">⚠ Key format looks wrong (should start with sk-ant-)</div>';
-  }
-  return '';
-}
-
 // Tables relevant to a lesson: the ones it declares PLUS any table its
 // exercises actually reference (many lessons declare only their main table but
 // have exercises that query others — e.g. lesson 1.2 is "employees" but its
@@ -965,6 +993,44 @@ function relevantTables(lesson) {
   }
   lesson._relTables = [...set];
   return lesson._relTables;
+}
+
+// Pre-built models a lesson queries (stg_/dim_/fact_ objects its `setup`
+// creates). They aren't in `schemas`, so their columns are read from SQLite.
+function lessonModels(lesson) { return (lesson && lesson.models) || []; }
+const modelColumnCache = {};
+function modelColumns(lesson, name) {
+  const key = (lesson ? lesson.id : '') + ':' + name;
+  if (modelColumnCache[key]) return modelColumnCache[key];
+  let cols = [];
+  try {
+    const r = SqlEngine.runOnFresh([lesson && lesson.setup, `SELECT name FROM pragma_table_info('${name}')`]);
+    if (r) cols = r.values.map(v => v[0]);
+  } catch {}
+  if (cols.length) modelColumnCache[key] = cols;
+  return cols;
+}
+// Column names of a table OR model, in the context of the current lesson.
+function tableColumns(name) {
+  if (schemas[name]) return schemas[name].cols.map(c => c.name);
+  return modelColumns(currentLesson, name);
+}
+// Everything queryable in the current lesson, for autocomplete.
+function hintTables() {
+  const base = currentLesson ? relevantTables(currentLesson) : Object.keys(schemas);
+  return base.concat(lessonModels(currentLesson));
+}
+
+// Run a capstone lesson's `setup` on the LIVE database so the models it
+// builds on exist when the learner starts typing. Setup is idempotent
+// (DROP IF EXISTS + CREATE). If the learner left an object of the wrong kind
+// behind (say a TABLE where a VIEW is expected) the DROP fails — rebuild the
+// practice data once and try again.
+function prepareLesson(lesson) {
+  if (!lesson || !lesson.liveSetup || !lesson.setup || !db) return true;
+  try { db.exec(lesson.setup); return true; } catch {}
+  try { seedDatabase(sqlModule); db.exec(lesson.setup); return true; }
+  catch (e) { console.error('lesson setup failed', lesson.id, e); return false; }
 }
 
 // ── Context-aware SQL autocomplete ──
@@ -1000,11 +1066,9 @@ function currentClause(before) {
 
 // Distinct column names across the tables in scope for this lesson.
 function hintColumns() {
-  const tables = currentLesson ? relevantTables(currentLesson) : Object.keys(schemas);
   const cols = [], seen = new Set();
-  for (const t of tables) {
-    if (!schemas[t]) continue;
-    for (const c of schemas[t].cols) if (!seen.has(c.name)) { seen.add(c.name); cols.push(c.name); }
+  for (const t of hintTables()) {
+    for (const c of tableColumns(t)) if (!seen.has(c)) { seen.add(c); cols.push(c); }
   }
   return cols;
 }
@@ -1012,8 +1076,9 @@ function hintColumns() {
 // Resolve a `t.` prefix to a table — either a real table name or an alias
 // introduced by `FROM/JOIN <table> [AS] <alias>`.
 function resolveAlias(before, alias) {
-  if (schemas[alias]) return alias;
-  const re = new RegExp('\\b(' + Object.keys(schemas).join('|') + ')\\s+(?:as\\s+)?' + alias + '\\b', 'i');
+  const names = Object.keys(schemas).concat(lessonModels(currentLesson));
+  if (names.includes(alias)) return alias;
+  const re = new RegExp('\\b(' + names.join('|') + ')\\s+(?:as\\s+)?' + alias + '\\b', 'i');
   const m = before.match(re);
   return m ? m[1].toLowerCase() : null;
 }
@@ -1031,13 +1096,14 @@ function sqlHint(cm) {
   if (dot >= 0) {
     const tbl = resolveAlias(beforeLc, word.slice(0, dot).toLowerCase());
     const prefix = word.slice(dot + 1).toLowerCase();
-    const cols = (tbl && schemas[tbl]) ? schemas[tbl].cols.map(c => c.name) : hintColumns();
+    const tblCols = tbl ? tableColumns(tbl) : [];
+    const cols = tblCols.length ? tblCols : hintColumns();
     return { list: cols.filter(c => c.toLowerCase().startsWith(prefix)),
              from: { line: cur.line, ch: start + dot + 1 }, to: cur };
   }
 
   const cols = hintColumns();
-  const tables = currentLesson ? relevantTables(currentLesson) : Object.keys(schemas);
+  const tables = hintTables();
   const clause = currentClause(beforeLc);
   const beforeTrim = beforeLc.replace(/\s+$/, '');
   const atStart = beforeTrim === '' || beforeTrim.endsWith(';');
@@ -1170,6 +1236,7 @@ let sqlModule = null;
 function reseedDatabase() {
   if (!sqlModule) return;
   seedDatabase(sqlModule);
+  prepareLesson(currentLesson);
   showToast('🗄️', 'Database', 'Practice data rebuilt', 'All tables restored to their original state. Your XP and progress are untouched.');
   if (lastResults) { lastResults = null; showEmpty(); }
 }
@@ -1252,7 +1319,9 @@ const COURSE_SECTIONS = [
   { label: 'Foundations', from: 1, to: 7 },
   { label: 'Working with Real Data', from: 8, to: 16 },
   { label: 'Analytics Engineering', from: 17, to: 21 },
-  { label: 'Data Engineer Track', from: 22, to: 99 }
+  { label: 'Data Engineer Track', from: 22, to: 28 },
+  { label: 'Warehouse Dialects — Snowflake & BigQuery', from: 29, to: 31 },
+  { label: 'Capstone — The Plant-Floor Warehouse', from: 32, to: 99 }
 ];
 
 function openCourseMap() {
@@ -1337,10 +1406,12 @@ function showWelcome() {
       <div class="welcome-sub">Go from your first <code style="font-family:var(--mono)">SELECT</code> to job-ready Analytics / Data Engineer skills. Everything runs in your browser against a real SQLite database — fully offline, nothing to install.</div>
     </div>
     <div class="welcome-feats">
-      <div class="welcome-feat"><span class="welcome-feat-icon">📚</span><div><div class="welcome-feat-name">28-day curriculum</div><div class="welcome-feat-desc">Querying → joins → windows → modeling, performance, ELT &amp; interview prep.</div></div></div>
+      <div class="welcome-feat"><span class="welcome-feat-icon">📚</span><div><div class="welcome-feat-name">${curriculum.length}-day curriculum</div><div class="welcome-feat-desc">Querying → joins → windows → modeling &amp; ELT → Snowflake / BigQuery dialects → a full warehouse capstone.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">▶</span><div><div class="welcome-feat-name">Real SQL, instantly</div><div class="welcome-feat-desc">Write a query, press Ctrl+Enter, see real results. Break things freely — reset data anytime.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">⚡</span><div><div class="welcome-feat-name">XP, streaks &amp; combos</div><div class="welcome-feat-desc">Level from Row Rookie to Principal Data Engineer. Progress saves automatically.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">📈</span><div><div class="welcome-feat-name">Readiness report</div><div class="welcome-feat-desc">Click your level badge to see per-skill progress mapped to real job requirements.</div></div></div>
+      <div class="welcome-feat"><span class="welcome-feat-icon">🔎</span><div><div class="welcome-feat-name">It tells you why</div><div class="welcome-feat-desc">A wrong answer gets a diagnosis — missing rows, a join fan-out, a rounding slip — not just a red X. No AI required.</div></div></div>
+      <div class="welcome-feat"><span class="welcome-feat-icon">🎤</span><div><div class="welcome-feat-name">Mock interviews</div><div class="welcome-feat-desc">Timed problems with follow-ups and a scorecard — solo, or with an AI interviewer running on your own machine.</div></div></div>
     </div>
     <button class="welcome-cta" onclick="closeModal()">Start Day 1 →</button>`);
 }
@@ -1398,8 +1469,13 @@ function loadLesson(lesson) {
   currentDay = curriculum.findIndex(d => d.lessons.includes(lesson));
   updateDayNav();
 
+  translateMode = null;
+  lastDiagnosis = '';
+  const prepared = prepareLesson(lesson);
+
   const schemaPills = document.getElementById('schema-pills');
-  schemaPills.innerHTML = relevantTables(lesson).map(t => `<span class="schema-pill" onclick="showSchema('${t}')">${t}</span>`).join('');
+  schemaPills.innerHTML = relevantTables(lesson).map(t => `<span class="schema-pill" onclick="showSchema('${t}')">${t}</span>`).join('') +
+    lessonModels(lesson).map(t => `<span class="schema-pill model" onclick="showSchema('${t}')" title="Pre-built for this lesson">◆ ${t}</span>`).join('');
 
   const dayData = curriculum.find(d => d.lessons.includes(lesson));
   const total = curriculum.flatMap(d => d.lessons).length;
@@ -1414,9 +1490,13 @@ function loadLesson(lesson) {
     <div class="lesson-body">${lesson.theory}</div>
     <div class="concept-chips">${lesson.chips.map(c => `<span class="chip ${c.c}">${c.t}</span>`).join('')}</div>
     <div class="task-box">
-      <div class="task-label">Your Task</div>
+      <div class="task-label">${lesson.translate ? 'Step 1 · SQLite — graded for real' : 'Your Task'}</div>
       <div class="task-text">${lesson.task}</div>
     </div>
+    ${lesson.liveSetup ? `<div class="prebuilt-note${prepared ? '' : ' failed'}">${prepared
+      ? (lessonModels(lesson).length ? `◆ Pre-built for this lesson: ${lessonModels(lesson).map(m => `<code>${m}</code>`).join(', ')} — the official versions of earlier models, so a slip on a previous day can't follow you here. ` : '') + `This lesson's own target is dropped each time you open it; <strong>↺ Reset data</strong> restores this state.`
+      : `Couldn't prepare this lesson's models — press <strong>↺ Reset data</strong> and reopen the lesson.`}</div>` : ''}
+    <div id="translate-panel"></div>
     <div class="progress-note">${completedLessons.size}/${total} lessons complete · ${pct}% to Data Engineer</div>
     <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
     ${!isDailyDone() ? `<div class="daily-banner">🎯<span><strong>Daily Challenge</strong> waiting — double XP and it keeps your 🔥 streak alive. <a href="#" onclick="startDailyChallenge();return false" style="color:var(--purple)">Take it on →</a></span></div>` : ''}
@@ -1427,6 +1507,7 @@ function loadLesson(lesson) {
   showEmpty();
   buildSidebar();
   renderExercisesList();
+  renderTranslatePanel();
   saveProgress();
 }
 
@@ -1457,6 +1538,7 @@ function resultColumnsFor(sql) {
 
 function runQuery() {
   if (!db || !currentLesson) return;
+  if (translateMode !== null) { checkTranslation(); return; }
   const sql = editor ? editor.getValue().trim() : '';
   if (!sql) return;
   try {
@@ -1538,34 +1620,188 @@ function exportCSV() {
   URL.revokeObjectURL(a.href);
 }
 
-function checkSolution(sql) {
+function checkSolution(sql, opts) {
   if (!currentLesson) return false;
   // Correctness is decided purely by RESULT-SET EQUIVALENCE (engine.js): a query
   // is correct iff it produces the same results as a reference answer — however
-  // it's written. Every lesson has authored references (refs.js), so the old
-  // brittle text/substring matching is gone. State-changing lessons are judged
-  // by a state probe; open-ended capstones by a structural accept path.
+  // it's written. Every lesson has authored references, so there is no text
+  // matching. State-changing lessons are judged by a state probe; open-ended
+  // capstones by a structural accept path.
+  const lesson = currentLesson;
   let verdict = 'unknown';
-  try { verdict = SqlEngine.evaluate(sql, currentLesson); } catch { verdict = 'unknown'; }
+  try { verdict = SqlEngine.evaluate(sql, lesson); } catch { verdict = 'unknown'; }
   const matches = verdict === 'pass';
-  if (matches && !completedLessons.has(currentLesson.id)) {
-    completedLessons.add(currentLesson.id);
-    const earned = awardXP(currentLesson.xp);
-    playSound('correct');
-    const next = getNextLesson();
-    const comboNote = combo >= 3 ? ` <span style="color:var(--amber)">🔥 ${combo}× combo</span>` : '';
-    let html = `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct! +${earned} XP${comboNote}</div>Well done! Your query works perfectly.</div>`;
-    if (next) {
-      html += `<button class="next-btn" onclick="loadLesson(getNextLesson())">Next Lesson →</button>`;
+  const done = completedLessons.has(lesson.id);
+
+  if (matches && !done) {
+    lastDiagnosis = '';
+    if (lesson.translate && lesson.translate.length) {
+      // Dialect lesson: the SQLite answer is step 1 of 2+.
+      const first = !translationsDone.has(lesson.id + ':sqlite');
+      translationsDone.add(lesson.id + ':sqlite');
+      saveProgress();
+      renderTranslatePanel();
+      const pending = nextTranslation(lesson);
+      if (pending === -1) {
+        completeLesson(lesson);
+      } else if (first) {
+        playSound('exercise');
+        prependOutput(`<div class="feedback-box feedback-success"><div class="feedback-label">✓ SQLite version correct</div>That's the right result. Now the part this lesson is really about: write the same query for <strong>${DialectCheck.labelFor(lesson.translate[pending])}</strong>.</div>
+          <button class="next-btn" onclick="startTranslation(${pending})">Translate to ${DialectCheck.labelFor(lesson.translate[pending])} →</button>`);
+      }
     } else {
-      html += `<div class="feedback-box feedback-info" style="margin-top:8px"><div class="feedback-label">🏆 Course Complete!</div>You've finished SQL Quest with ${xp.toLocaleString()} XP. Open your <a href="#" onclick="openCareerModal();return false" style="color:var(--accent)">Data Engineer Readiness report</a> — you're ready to interview.</div>`;
-      burstConfetti(true);
+      completeLesson(lesson);
     }
-    const existing = document.getElementById('output-content').innerHTML;
-    document.getElementById('output-content').innerHTML = html + '<hr class="divider">' + existing;
-    buildSidebar();
+  } else if (verdict === 'fail' && !done && (!opts || opts.explain !== false) && !translationsDone.has(lesson.id + ':sqlite')) {
+    showExplanation(sql, lesson);
   }
   return matches;
+}
+
+// Mark a lesson complete: XP, success banner, next-lesson button.
+function completeLesson(lesson) {
+  if (completedLessons.has(lesson.id)) return;
+  completedLessons.add(lesson.id);
+  const earned = awardXP(lesson.xp);
+  playSound('correct');
+  const next = getNextLesson();
+  const comboNote = combo >= 3 ? ` <span style="color:var(--amber)">🔥 ${combo}× combo</span>` : '';
+  let html = `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct! +${earned} XP${comboNote}</div>${lesson.translate ? 'Both versions done — you can write this one in any warehouse.' : 'Well done! Your query works perfectly.'}</div>`;
+  if (next) {
+    html += `<button class="next-btn" onclick="loadLesson(getNextLesson())">Next Lesson →</button>`;
+  } else {
+    html += `<div class="feedback-box feedback-info" style="margin-top:8px"><div class="feedback-label">🏆 Course Complete!</div>You've finished SQL Quest with ${xp.toLocaleString()} XP. Open your <a href="#" onclick="openCareerModal();return false" style="color:var(--accent)">Data Engineer Readiness report</a> — then prove it in a <a href="#" onclick="openInterview();return false" style="color:var(--accent)">mock interview</a>.</div>`;
+    burstConfetti(true);
+  }
+  prependOutput(html);
+  buildSidebar();
+}
+
+// ── Wrong-answer explainer (explain.js) ──
+// Shown as a collapsed line above the results, so exploratory queries aren't
+// buried in feedback; it remembers whether you like it open.
+function showExplanation(sql, lesson) {
+  let d = null;
+  try { d = SqlExplain.diagnose(sql, lesson); } catch { d = null; }
+  if (!d || d.verdict !== 'fail') { lastDiagnosis = ''; return; }
+  lastDiagnosis = SqlExplain.summarize(d);
+  const open = localStorage.getItem('sql_bootcamp_explain_open') === '1';
+  const shape = d.got
+    ? `Expected ${d.expected.rows} row${d.expected.rows === 1 ? '' : 's'} × ${d.expected.cols} column${d.expected.cols === 1 ? '' : 's'} · yours: ${d.got.rows} × ${d.got.cols}`
+    : `Expected ${d.expected.rows} row${d.expected.rows === 1 ? '' : 's'} × ${d.expected.cols} column${d.expected.cols === 1 ? '' : 's'}`;
+  const ask = AI.ready() ? ` · <a href="#" onclick="askTutorWhy();return false">Ask the AI tutor</a>` : '';
+  prependOutput(`<details class="explain-box"${open ? ' open' : ''} ontoggle="localStorage.setItem('sql_bootcamp_explain_open', this.open ? '1' : '0')">
+    <summary><span class="explain-kicker">Not the answer yet</span><span class="explain-headline">${escapeHtml(d.headline)}</span></summary>
+    <ul class="explain-points">${d.points.map(pt => `<li>${pt}</li>`).join('')}</ul>
+    <div class="explain-foot">${d.stateCheck ? 'Compared on the resulting database state · ' : ''}${shape}${ask}</div>
+  </details>`);
+}
+
+// ── Dialect lessons: step 2, the structural translation check ──
+function nextTranslation(lesson) {
+  if (!lesson || !lesson.translate) return -1;
+  return lesson.translate.findIndex((_, i) => !translationsDone.has(lesson.id + ':' + i));
+}
+
+function renderTranslatePanel() {
+  const el = document.getElementById('translate-panel');
+  if (!el) return;
+  const lesson = currentLesson;
+  if (!lesson || !lesson.translate || !lesson.translate.length) { el.innerHTML = ''; updateRunButton(); return; }
+  const all = completedLessons.has(lesson.id);
+  const sqliteDone = all || translationsDone.has(lesson.id + ':sqlite');
+  const steps = lesson.translate.map((tr, i) => {
+    const done = all || translationsDone.has(lesson.id + ':' + i);
+    const active = translateMode === i;
+    const locked = !sqliteDone;
+    return `<div class="tr-step${done ? ' done' : ''}${active ? ' active' : ''}${locked ? ' locked' : ''}" ${locked ? '' : `onclick="startTranslation(${i})"`}>
+      <span class="tr-num">${done ? '✓' : i + 2}</span>
+      <span class="tr-body"><span class="tr-title">Step ${i + 2} · ${DialectCheck.labelFor(tr)} — checked structurally</span>
+        <span class="tr-prompt">${tr.prompt}</span></span>
+      ${locked ? '<span class="tr-state">🔒 solve step 1 first</span>' : active ? '<span class="tr-state">in the editor now</span>' : done ? '' : '<span class="tr-state go">Start →</span>'}
+    </div>`;
+  }).join('');
+  el.innerHTML = `<div class="translate-panel">
+      <div class="tr-step${sqliteDone ? ' done' : ''}${translateMode === null && !sqliteDone ? ' active' : ''}" onclick="exitTranslation()">
+        <span class="tr-num">${sqliteDone ? '✓' : 1}</span>
+        <span class="tr-body"><span class="tr-title">Step 1 · SQLite — runs here, graded on its results</span></span>
+        ${translateMode !== null ? '<span class="tr-state go">Back to SQLite</span>' : ''}
+      </div>
+      ${steps}
+      <div class="tr-note">A Snowflake or BigQuery query can't run in the browser, so steps 2+ are checked for the right constructs — then you compare against a model answer.</div>
+    </div>`;
+  updateRunButton();
+}
+
+function updateRunButton() {
+  const btn = document.querySelector('.editor-buttons .btn-primary');
+  if (!btn) return;
+  const tr = translateMode !== null && currentLesson && currentLesson.translate ? currentLesson.translate[translateMode] : null;
+  btn.textContent = tr ? `✓ Check ${DialectCheck.labelFor(tr)}` : '▶ Run Query';
+  btn.classList.toggle('checking', !!tr);
+  const wrap = document.getElementById('sql-editor-wrap');
+  if (wrap) wrap.classList.toggle('translating', !!tr);
+}
+
+function startTranslation(i) {
+  const lesson = currentLesson;
+  if (!lesson || !lesson.translate || !lesson.translate[i]) return;
+  if (!completedLessons.has(lesson.id) && !translationsDone.has(lesson.id + ':sqlite')) return;
+  if (currentExercise) clearExercise();
+  translateMode = i;
+  const tr = lesson.translate[i];
+  renderTranslatePanel();
+  showFeedback('info', `Translate to ${DialectCheck.labelFor(tr)}`,
+    `${tr.prompt}<div class="tr-howto">Edit the query in the editor into ${DialectCheck.labelFor(tr)} syntax, then press <strong>✓ Check</strong> (or Ctrl+Enter). It won't be executed — the check looks for the right constructs.</div>`);
+  document.getElementById('row-count').style.display = 'none';
+  if (editor) editor.focus();
+}
+
+function exitTranslation() {
+  if (translateMode === null) return;
+  translateMode = null;
+  renderTranslatePanel();
+  showEmpty();
+}
+
+function checkTranslation() {
+  const lesson = currentLesson;
+  const i = translateMode;
+  const tr = lesson && lesson.translate && lesson.translate[i];
+  if (!tr) return;
+  const sql = editor ? editor.getValue().trim() : '';
+  if (!sql) return;
+  const label = DialectCheck.labelFor(tr);
+  document.getElementById('row-count').style.display = 'none';
+  const res = DialectCheck.check(sql, tr);
+  if (!res.ok) {
+    playSound('error');
+    lastDiagnosis = `${label} translation check: ` + res.problems.map(pr => stripTags(pr.msg)).join(' ');
+    showFeedback('error', `Not ${label} yet`,
+      `<ul class="explain-points">${res.problems.map(pr => `<li>${pr.msg}</li>`).join('')}</ul><div class="explain-foot">Structural check — the query is not executed.</div>`);
+    return;
+  }
+  lastDiagnosis = '';
+  const key = lesson.id + ':' + i;
+  const fresh = !translationsDone.has(key) && !completedLessons.has(lesson.id);
+  translationsDone.add(key);
+  saveProgress();
+  const model = `<div class="section-mini-title">Model answer — compare with yours</div><pre class="model-sql">${escapeHtml(tr.model)}</pre>`;
+  const pending = nextTranslation(lesson);
+  showFeedback('success', `✓ ${label}: structure checks out`,
+    `Every construct the check looks for is there, and the SQLite-only syntax is gone. It can't be run here, so read it against the model answer once.`);
+  document.getElementById('output-content').insertAdjacentHTML('beforeend', model);
+  if (pending !== -1) {
+    playSound('exercise');
+    translateMode = null;
+    renderTranslatePanel();
+    document.getElementById('output-content').insertAdjacentHTML('beforeend',
+      `<button class="next-btn" onclick="startTranslation(${pending})">Next: ${DialectCheck.labelFor(lesson.translate[pending])} →</button>`);
+  } else {
+    translateMode = null;
+    if (fresh || !completedLessons.has(lesson.id)) completeLesson(lesson);
+    renderTranslatePanel();
+  }
 }
 
 function getNextLesson() {
@@ -1584,11 +1820,24 @@ function showHint() {
   const hadCombo = combo >= 2;
   breakCombo();
   saveProgress();
-  const hintText = currentExercise ? currentExercise.hint : currentLesson.hint;
+  let hintText = currentExercise ? currentExercise.hint : currentLesson.hint;
+  if (translateMode !== null && currentLesson.translate && currentLesson.translate[translateMode]) {
+    // In translation mode the hint is the first thing the check still wants.
+    const tr = currentLesson.translate[translateMode];
+    const res = DialectCheck.check(editor ? editor.getValue() : '', tr);
+    const gap = res.problems.find(pr => pr.type !== 'empty');
+    hintText = gap ? gap.msg : (tr.requires[0] ? tr.requires[0].msg : tr.prompt);
+  }
   const comboNote = hadCombo ? `<div style="font-size:10.5px;color:var(--text3);margin-top:6px">💔 Combo reset — hints are free, but they cost your streak of clean solves.</div>` : '';
   const existing = document.getElementById('output-content').innerHTML;
-  const hint = `<div class="feedback-box feedback-hint"><div class="feedback-label">💡 Hint</div>${hintText}${comboNote}</div>`;
+  const hint = `<div class="feedback-box feedback-hint"><div class="feedback-label">💡 Hint</div>${escapeHint(hintText)}${comboNote}</div>`;
   document.getElementById('output-content').innerHTML = hint + (existing.includes('empty-state') ? '' : '<hr class="divider">' + existing);
+}
+
+// Hints are authored as HTML (they use <code>), but capstone hints quote SQL
+// with comparison operators — escape a bare < or > that isn't part of a tag.
+function escapeHint(h) {
+  return String(h || '').replace(/<(?!\/?(code|strong|em|br|pre)\b)/g, '&lt;');
 }
 
 function resetQuery() {
@@ -1600,12 +1849,22 @@ function showSchema(tableName) {
   document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.output-tab')[1].classList.add('active');
   document.getElementById('row-count').style.display = 'none';
-  const tbl = schemas[tableName];
-  if (!tbl) return;
+  let tbl = schemas[tableName];
+  if (!tbl) {
+    // A pre-built model (view/table created by the lesson's setup): describe it
+    // from the live database.
+    let info = null;
+    try { info = db.exec(`SELECT name, type, pk FROM pragma_table_info('${tableName}')`); } catch (e) {}
+    if (!info || !info[0]) {
+      document.getElementById('output-content').innerHTML = `<div class="feedback-box feedback-info"><div class="feedback-label">${tableName}</div>This model doesn't exist in the practice database right now — press <strong>↺ Reset data</strong> to rebuild it.</div>`;
+      return;
+    }
+    tbl = { cols: info[0].values.map(r => ({ name: r[0], type: r[1] || 'computed', pk: !!r[2] })) };
+  }
   let result;
   try { result = db.exec(`SELECT * FROM ${tableName} LIMIT 3`); } catch(e) {}
   let html = `<div class="schema-table-view">
-    <div class="schema-table-name">📋 ${tableName}</div>
+    <div class="schema-table-name">${schemas[tableName] ? '📋' : '◆'} ${tableName}</div>
     ${tbl.cols.map(c => `<div class="schema-col">
       <span class="schema-col-name">${c.name}</span>
       <span class="schema-col-type">${c.type}</span>
@@ -1615,7 +1874,7 @@ function showSchema(tableName) {
   if (result && result[0]) {
     html += `<div class="section-mini-title">Sample Data</div>`;
     html += `<table class="result-table" style="font-size:11px"><thead><tr>${result[0].columns.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`;
-    result[0].values.forEach(row => { html += `<tr>${row.map(v=>`<td>${v??'NULL'}</td>`).join('')}</tr>`; });
+    result[0].values.forEach(row => { html += `<tr>${row.map(v=>`<td>${v === null ? 'NULL' : escapeHtml(String(v))}</td>`).join('')}</tr>`; });
     html += `</tbody></table>`;
   }
   document.getElementById('output-content').innerHTML = html;
@@ -1633,36 +1892,191 @@ function switchTab(name, el) {
   }
 }
 
+// ── AI Tutor ──
+// Optional, and not tied to a paid API: ai.js talks to a local model (Ollama,
+// LM Studio, llama.cpp, …) or to the Anthropic API. Grading, hints and the
+// wrong-answer explainer never need it.
+let aiSettingsOpen = false;
+let aiLocalModels = [];
+let aiStatus = null;               // { type: 'ok' | 'err' | 'info', msg }
+
+// Model output is untrusted text: escape it, then allow a little formatting.
+function formatAI(text) {
+  let h = escapeHtml(String(text || '').trim());
+  h = h.replace(/```[a-z]*\n?([\s\S]*?)```/g, (_, code) => `<pre class="model-sql">${code.replace(/\n+$/, '')}</pre>`);
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  return h.replace(/\n/g, '<br>').replace(/<\/pre><br>/g, '</pre>');
+}
+
+function readAIForm() {
+  const patch = {};
+  const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : null; };
+  if (v('ai-local-url') !== null) patch.localUrl = v('ai-local-url');
+  if (v('ai-local-model') !== null) patch.localModel = v('ai-local-model');
+  if (v('ai-anthropic-key') !== null) patch.anthropicKey = v('ai-anthropic-key');
+  if (v('ai-anthropic-model') !== null && v('ai-anthropic-model')) patch.anthropicModel = v('ai-anthropic-model');
+  return patch;
+}
+function toggleAISettings() { AI.save(readAIForm()); aiSettingsOpen = !aiSettingsOpen; aiStatus = null; renderAITab(); }
+function setAIProvider(provider) { AI.save(Object.assign(readAIForm(), { provider })); aiStatus = null; renderAITab(); }
+function setAIPreset(id) {
+  const preset = AI.LOCAL_PRESETS.find(x => x.id === id);
+  if (!preset) return;
+  AI.save(Object.assign(readAIForm(), { localUrl: preset.url }));
+  aiLocalModels = [];
+  detectLocalModels(true);
+}
+// `keepSaved`: the caller just saved new settings — don't re-read the (stale) form.
+async function detectLocalModels(keepSaved) {
+  if (keepSaved !== true) AI.save(readAIForm());
+  aiStatus = { type: 'info', msg: 'Looking for models…' };
+  renderAITab();
+  try {
+    aiLocalModels = await AI.listLocalModels();
+    if (!aiLocalModels.length) {
+      aiStatus = { type: 'err', msg: 'The server answered, but it has no models yet. Pull or load one first (see “How do I get a local model?” below).' };
+    } else {
+      if (!aiLocalModels.includes(AI.config().localModel)) AI.save({ localModel: aiLocalModels[0] });
+      aiStatus = { type: 'ok', msg: `Found ${aiLocalModels.length} model${aiLocalModels.length === 1 ? '' : 's'}. Pick one and press Save & test.` };
+    }
+  } catch (e) {
+    aiLocalModels = [];
+    aiStatus = { type: 'err', msg: e.message };
+  }
+  renderAITab();
+}
+async function saveAISettings() {
+  AI.save(readAIForm());
+  if (!AI.ready()) {
+    aiStatus = { type: 'err', msg: AI.config().provider === 'anthropic' ? 'That key doesn’t look right — Anthropic API keys start with sk-ant-.' : 'Enter the server URL and a model name (or press Detect models).' };
+    renderAITab();
+    return;
+  }
+  aiStatus = { type: 'info', msg: 'Testing…' };
+  renderAITab();
+  try {
+    await AI.chat({ system: 'Reply with the single word: ready', messages: [{ role: 'user', content: 'Are you there?' }], maxTokens: 20 });
+    aiStatus = { type: 'ok', msg: `Connected — ${AI.label()} is answering.` };
+    aiSettingsOpen = false;
+  } catch (e) {
+    aiStatus = { type: 'err', msg: e.message };
+  }
+  renderAITab();
+}
+
+function aiSettingsHtml() {
+  const c = AI.config();
+  const local = c.provider !== 'anthropic';
+  const status = aiStatus ? `<div class="ai-key-status ${aiStatus.type === 'ok' ? 'ok' : aiStatus.type === 'err' ? 'missing' : 'info'}">${aiStatus.type === 'ok' ? '✓ ' : aiStatus.type === 'err' ? '⚠ ' : ''}${escapeHtml(aiStatus.msg)}</div>` : '';
+  const models = aiLocalModels.length ? aiLocalModels : (c.localModel ? [c.localModel] : []);
+  const body = local ? `
+      <div class="ai-presets">${AI.LOCAL_PRESETS.map(pr => `<button class="schema-pill${c.localUrl === pr.url ? ' on' : ''}" onclick="setAIPreset('${pr.id}')">${pr.name}</button>`).join('')}</div>
+      <label class="ai-field"><span>Server URL</span><input class="ai-key-input" id="ai-local-url" value="${escapeHtml(c.localUrl)}" placeholder="http://localhost:11434/v1" spellcheck="false"></label>
+      <label class="ai-field"><span>Model</span>
+        ${aiLocalModels.length
+          ? `<select class="ai-key-input" id="ai-local-model">${models.map(m => `<option${m === c.localModel ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}</select>`
+          : `<input class="ai-key-input" id="ai-local-model" value="${escapeHtml(c.localModel)}" placeholder="e.g. llama3.2" spellcheck="false">`}
+      </label>
+      <div class="ai-key-row">
+        <button class="btn btn-ghost" onclick="detectLocalModels()">Detect models</button>
+        <button class="btn btn-primary" onclick="saveAISettings()">Save &amp; test</button>
+      </div>
+      ${status}
+      <details class="ai-help"><summary>How do I get a local model?</summary>
+        <ol>
+          <li>Install <strong>Ollama</strong> (ollama.com) or <strong>LM Studio</strong> (lmstudio.ai). Both are free and run entirely on your machine.</li>
+          <li>Get a chat model. Ollama: <code>ollama pull llama3.2</code> — a coding-tuned model such as <code>qwen2.5-coder</code> gives sharper SQL help if your machine can run it. LM Studio: download a model, then start the local server from its Developer tab.</li>
+          <li>Pick the matching preset above and press <strong>Detect models</strong>.</li>
+        </ol>
+        <p><strong>Blocked?</strong> A browser page needs the server's permission to call it (CORS). Ollama: set the environment variable <code>OLLAMA_ORIGINS=*</code> and restart Ollama (Windows: <code>setx OLLAMA_ORIGINS "*"</code>, then quit and reopen it). LM Studio: switch on <em>Enable CORS</em> in the server settings.</p>
+        <p>Small models are fine for hints and follow-up questions. They are never asked whether your SQL is correct — the built-in engine decides that.</p>
+      </details>` : `
+      <label class="ai-field"><span>API key</span><input class="ai-key-input" type="password" id="ai-anthropic-key" placeholder="sk-ant-..." value="${escapeHtml(c.anthropicKey)}"></label>
+      <label class="ai-field"><span>Model</span><input class="ai-key-input" id="ai-anthropic-model" value="${escapeHtml(c.anthropicModel)}" spellcheck="false"></label>
+      <div class="ai-key-row"><button class="btn btn-primary" onclick="saveAISettings()">Save &amp; test</button></div>
+      ${status}
+      <p class="ai-note">Uses your own Anthropic API key (console.anthropic.com), billed per use — separate from a Claude.ai subscription. The key is stored only in this browser and sent only to Anthropic.</p>`;
+  return `
+    <div class="ai-key-setup">
+      <strong>Choose where the tutor runs.</strong> It's optional — grading, hints and the “why isn't this passing?” explainer work with no AI at all.
+      <div class="ai-provider-tabs">
+        <button class="ai-provider${local ? ' on' : ''}" onclick="setAIProvider('local')">🖥 Local model<small>free · offline · no account</small></button>
+        <button class="ai-provider${local ? '' : ' on'}" onclick="setAIProvider('anthropic')">☁ Anthropic API<small>your own API key</small></button>
+      </div>
+      ${body}
+    </div>`;
+}
+
 function renderAITab() {
   if (aiMessages.length === 0) {
     aiMessages.push({role:'assistant', content:"Hi! I'm your SQL tutor. Ask me anything about the current lesson or SQL concepts. I'll give hints rather than spoilers! 🎓"});
   }
-  const keyOk = anthropicApiKey && anthropicApiKey.startsWith('sk-ant-');
-  const setup = keyOk ? '' : `
-    <div class="ai-key-setup">
-      <strong>Optional: enable the AI Tutor.</strong> Paste an Anthropic API key to chat with a tutor that knows your current lesson. The key is stored only in this browser and sent only to Anthropic.
-      <div class="ai-key-row">
-        <input class="ai-key-input" type="password" id="api-key-input" placeholder="sk-ant-..." value="${escapeHtml(anthropicApiKey)}">
-        <button class="btn btn-primary" onclick="saveApiKey()">Save</button>
-      </div>
-      ${apiKeyStatusHtml()}
-    </div>`;
+  const ok = AI.ready();
+  // Once the setup panel is showing, keep it up until a successful Save & test
+  // (detecting models makes the config "ready" before the user has confirmed).
+  if (!ok) aiSettingsOpen = true;
+  const showSettings = aiSettingsOpen;
+  document.getElementById('row-count').style.display = 'none';
   document.getElementById('output-content').innerHTML = `
     <div class="ai-chat">
-      ${setup}
-      <div class="ai-messages" id="ai-messages">${aiMessages.map(m=>`<div class="ai-msg ${m.role}">${m.content}</div>`).join('')}</div>
+      <div class="ai-bar">
+        <span class="ai-bar-status ${ok ? 'ok' : 'off'}">${ok ? '● ' + escapeHtml(AI.label()) : '○ No model connected'}</span>
+        ${ok ? `<button class="btn btn-ghost" onclick="toggleAISettings()">${aiSettingsOpen ? 'Close' : '⚙ Model'}</button>` : ''}
+      </div>
+      ${showSettings ? aiSettingsHtml() : ''}
+      <div class="ai-messages" id="ai-messages">${aiMessages.map(m => `<div class="ai-msg ${m.role}">${m.role === 'assistant' ? formatAI(m.content) : escapeHtml(m.content)}</div>`).join('')}</div>
+      ${ok && lastDiagnosis ? `<div class="ai-quick"><button class="schema-pill" onclick="askTutorWhy()">Why isn't my last query passing?</button></div>` : ''}
       <div class="ai-input-row">
-        <input class="ai-input" type="text" id="ai-input" placeholder="${keyOk ? 'Ask a question...' : 'Add an API key above to enable the AI Tutor'}" ${keyOk ? '' : 'disabled'} onkeydown="if(event.key==='Enter')sendAI()">
-        <button class="ai-send" onclick="sendAI()" ${keyOk ? '' : 'disabled'}>↑</button>
+        <input class="ai-input" type="text" id="ai-input" placeholder="${ok ? 'Ask a question...' : 'Connect a model above to chat with the tutor'}" ${ok ? '' : 'disabled'} onkeydown="if(event.key==='Enter')sendAI()">
+        <button class="ai-send" onclick="sendAI()" ${ok ? '' : 'disabled'}>↑</button>
       </div>
     </div>
   `;
-  const msgs = document.getElementById('ai-messages');
-  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  aiScrollToEnd();
+}
+// Settings and messages share one scroll area (.ai-chat); keep the newest
+// message in view.
+function aiScrollToEnd() {
+  const chat = document.querySelector('.ai-chat');
+  if (chat) chat.scrollTop = chat.scrollHeight;
+}
+
+// What the tutor is told about the learner's situation.
+function tutorSystemPrompt() {
+  const l = currentLesson;
+  let ctx = '';
+  if (l) {
+    const tables = relevantTables(l).concat(lessonModels(l));
+    ctx += `\nCurrent lesson: "${l.title}" (${l.concept}). Task: ${stripTags(l.task)}`;
+    ctx += `\nTables: ${tables.map(t => `${t}(${tableColumns(t).join(', ')})`).join('; ')}`;
+    if (currentExercise) ctx += `\nThe learner is on this practice exercise: ${stripTags(currentExercise.prompt)}`;
+    if (translateMode !== null && l.translate && l.translate[translateMode]) {
+      const tr = l.translate[translateMode];
+      ctx += `\nThey already solved it in SQLite and are now rewriting it for ${DialectCheck.labelFor(tr)}: ${stripTags(tr.prompt)}`;
+    }
+  }
+  const sql = editor ? editor.getValue().trim() : '';
+  if (sql) ctx += `\nTheir current query:\n${sql.slice(0, 1500)}`;
+  if (lastDiagnosis) ctx += `\nThe app's automatic check of their latest attempt says: ${lastDiagnosis.slice(0, 900)}`;
+  return `You are a friendly, concise SQL tutor inside an interactive SQL course that takes learners from beginner to data engineer. The practice database is SQLite.${ctx}
+Keep answers short (2-5 sentences). Use backticks for SQL. Explain the concept and give a nudge; do not write the full solution to the current task.`;
+}
+
+function askTutorWhy() {
+  activeTab = 'ai';
+  document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
+  const tab = document.querySelectorAll('.output-tab')[2];
+  if (tab) tab.classList.add('active');
+  document.getElementById('row-count').style.display = 'none';
+  renderAITab();
+  if (!AI.ready()) return;
+  const input = document.getElementById('ai-input');
+  if (input) { input.value = "My query isn't passing — can you help me understand why, without giving me the answer?"; sendAI(); }
 }
 
 async function sendAI() {
-  if (!anthropicApiKey) return;
+  if (!AI.ready()) return;
   const input = document.getElementById('ai-input');
   if (!input || !input.value.trim()) return;
   const userMsg = input.value.trim();
@@ -1679,37 +2093,42 @@ async function sendAI() {
     typingEl.innerHTML = '<span></span><span></span><span></span>';
     typingEl.id = 'typing';
     msgs.appendChild(typingEl);
-    msgs.scrollTop = msgs.scrollHeight;
+    aiScrollToEnd();
   }
-  const lessonCtx = currentLesson ? `Current lesson: "${currentLesson.title}" (${currentLesson.concept}). Task: ${currentLesson.task}. Tables: ${currentLesson.tables.join(', ')}.` : '';
+  // The conversation sent to the model must open with a user turn.
+  const recent = aiMessages.slice(-8);
+  while (recent.length && recent[0].role !== 'user') recent.shift();
+  let reply, failed = false;
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": anthropicApiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-      body: JSON.stringify({
-        model: "claude-opus-4-8",
-        max_tokens: 300,
-        system: `You are a friendly, concise SQL tutor inside an interactive SQL course that takes learners from beginner to Analytics/Data Engineer over 28 days. The dialect is SQLite. ${lessonCtx} Keep answers short (2-4 sentences). Use backticks for SQL keywords. Give hints, not full answers.`,
-        messages: aiMessages.slice(-8).map(m => ({role: m.role, content: m.content}))
-      })
-    });
-    const data = await resp.json();
-    const reply = data.content?.[0]?.text || "Sorry, couldn't respond. Try again!";
+    reply = await AI.chat({ system: tutorSystemPrompt(), messages: recent.map(m => ({role: m.role, content: m.content})), maxTokens: 400 });
     aiMessages.push({role:'assistant', content: reply});
-    document.getElementById('typing')?.remove();
-    const aEl = document.createElement('div');
-    aEl.className = 'ai-msg assistant';
-    aEl.innerHTML = reply.replace(/`([^`]+)`/g, '<code>$1</code>');
-    const msgsEl = document.getElementById('ai-messages');
-    if (msgsEl) { msgsEl.appendChild(aEl); msgsEl.scrollTop = msgsEl.scrollHeight; }
   } catch (e) {
-    document.getElementById('typing')?.remove();
-    const aEl = document.createElement('div');
-    aEl.className = 'ai-msg assistant';
-    aEl.textContent = "Couldn't connect. Check your API key and try again.";
-    document.getElementById('ai-messages')?.appendChild(aEl);
+    failed = true;
+    reply = `Couldn't get a reply: ${e.message}`;
+    aiMessages.pop();                         // let them resend the question
   }
+  document.getElementById('typing')?.remove();
+  const aEl = document.createElement('div');
+  aEl.className = 'ai-msg assistant' + (failed ? ' failed' : '');
+  if (failed) aEl.textContent = reply; else aEl.innerHTML = formatAI(reply);
+  const msgsEl = document.getElementById('ai-messages');
+  if (msgsEl) { msgsEl.appendChild(aEl); aiScrollToEnd(); }
 }
 
+// ── Mock interview hooks (interview.js) ──
+function openInterview() {
+  if (typeof Interview !== 'undefined') Interview.open();
+}
+// XP earned outside the lesson flow (no combo multiplier, no combo bump).
+function awardBonusXP(amount, reason) {
+  if (!(amount > 0)) return;
+  const prevLevel = levelForXp(xp);
+  xp += amount;
+  updateXPDisplay();
+  bumpStreak();
+  showToast('⚡', reason || 'Bonus', `+${amount} XP`, '');
+  if (levelForXp(xp) > prevLevel) showLevelUp(levelForXp(xp));
+  saveProgress();
+}
 
 initDB().catch(console.error);
