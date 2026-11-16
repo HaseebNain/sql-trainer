@@ -4,10 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SQL Quest — Zero to Data Engineer</title>
-<!-- Everything below is local: the app is fully offline-capable. The Google
-     Fonts link is a progressive enhancement — system fonts take over offline. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Everything is local, fonts included (vendor/fonts): the app is fully offline. -->
 <link rel="stylesheet" href="vendor/codemirror.min.css">
 <link rel="stylesheet" href="vendor/show-hint.min.css">
 <link rel="stylesheet" href="styles.css">
@@ -23,13 +20,13 @@
 <body>
 
 <div class="topbar">
-  <div class="logo">
-    <div class="logo-icon">SQL</div>
-    <div class="logo-text">
+  <button class="logo" onclick="openToday()" title="Today — your streak, what's next, and the daily challenge">
+    <span class="logo-icon">SQL</span>
+    <span class="logo-text">
       SQL Quest
-      <span class="logo-sub">Zero → Data Engineer</span>
-    </div>
-  </div>
+      <span class="logo-sub">Zero to data engineer</span>
+    </span>
+  </button>
 
   <div class="day-nav">
     <button class="nav-chev" id="prev-day-btn" onclick="stepDay(-1)" title="Previous day">‹</button>
@@ -42,24 +39,26 @@
   </div>
 
   <div class="topbar-right">
-    <button class="interview-btn" id="interview-btn" onclick="openInterview()" title="Timed mock interview with follow-up questions and a scorecard — solo, or with an AI interviewer">🎤 Interview</button>
-    <button class="quiz-btn" id="quiz-btn" onclick="startQuiz()" title="Quick self-check — random questions from lessons you've completed">🧠 Quiz</button>
-    <button class="daily-btn" id="daily-btn" onclick="startDailyChallenge()" title="One challenge a day. Double XP. Keeps your streak alive.">🎯 Daily ×2</button>
-    <div class="streak-pill" id="streak-pill" title="Daily streak — complete anything once a day to keep it burning">🔥 0</div>
-    <div class="level-widget" onclick="openCareerModal()" title="Click to see your Data Engineer readiness">
+    <button class="interview-btn" id="interview-btn" onclick="openInterview()" title="Timed mock interview with follow-up questions and a scorecard — solo, or with an AI interviewer">Interview</button>
+    <button class="quiz-btn" id="quiz-btn" onclick="startQuiz()" title="Quick self-check — random questions from lessons you've completed">Quiz</button>
+    <button class="daily-btn" id="daily-btn" onclick="startDailyChallenge()" title="One challenge a day. Double XP. Keeps your streak alive.">Daily challenge</button>
+    <button class="streak-pill" id="streak-pill" onclick="openToday()" title="Daily streak — finish anything once a day to keep it going">0</button>
+    <div class="level-widget" onclick="openCareerModal()" title="See your data engineer readiness">
       <div class="level-badge" id="level-badge">1</div>
       <div class="level-info">
         <div class="level-title" id="level-title">Row Rookie</div>
         <div class="level-bar"><div class="level-bar-fill" id="level-bar-fill" style="width:0%"></div></div>
       </div>
-      <div class="level-xp" id="xp-display">⚡ 0</div>
+      <div class="level-xp" id="xp-display">0 XP</div>
     </div>
-    <button class="btn btn-ghost icon-btn" onclick="openAchievements()" title="Achievements">🏆</button>
-    <button class="btn btn-ghost icon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light / dark theme">☀️</button>
-    <button class="btn btn-ghost icon-btn" id="sound-btn" onclick="toggleSound()" title="Toggle sound">🔊</button>
-    <button class="btn btn-ghost icon-btn" onclick="openShortcuts()" title="Keyboard shortcuts">⌨</button>
-    <button class="ver-btn" id="ver-btn" onclick="openUpdateModal()" title="Version &amp; check for updates"><span class="ver-label" id="ver-label">v…</span><span class="ver-dot" aria-hidden="true"></span></button>
-    <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="resetProgress()">Reset</button>
+    <div class="topbar-utils">
+      <button class="icon-btn" id="ach-btn" onclick="openAchievements()" title="Achievements" aria-label="Achievements"></button>
+      <button class="icon-btn" id="theme-btn" onclick="toggleTheme()" title="Switch between light and dark" aria-label="Switch theme"></button>
+      <button class="icon-btn" id="sound-btn" onclick="toggleSound()" title="Sound on or off" aria-label="Toggle sound"></button>
+      <button class="icon-btn hide-narrow" id="keys-btn" onclick="openShortcuts()" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"></button>
+      <button class="ver-btn hide-narrow" id="ver-btn" onclick="openUpdateModal()" title="Version and updates"><span class="ver-label" id="ver-label">v…</span><span class="ver-dot" aria-hidden="true"></span></button>
+      <button class="btn btn-ghost hide-narrow" style="font-size:11.5px" onclick="resetProgress()" title="Erase all progress">Reset</button>
+    </div>
   </div>
 </div>
 
@@ -67,7 +66,7 @@
   <div class="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-header-title">
-        <span>Curriculum</span>
+        <span>Your route</span>
         <span id="sidebar-progress-count">0%</span>
       </div>
       <div class="sidebar-progress"><div class="sidebar-progress-fill" id="sidebar-progress-fill" style="width:0%"></div></div>
@@ -82,14 +81,14 @@
       <div class="editor-header">
         <div class="schema-pills-wrap" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <div class="schema-pills" id="schema-pills"></div>
-          <button class="reseed-btn" onclick="reseedDatabase()" title="Rebuild the practice database from scratch — undoes any INSERT/UPDATE/DELETE/DROP you've run">↺ Reset data</button>
+          <button class="reseed-btn" onclick="reseedDatabase()" title="Rebuild the practice database from scratch — undoes any INSERT/UPDATE/DELETE/DROP you've run">Reset data</button>
         </div>
         <div class="editor-buttons">
           <div class="combo-ind" id="combo-ind"></div>
-          <button class="hint-btn" onclick="showHint()">💡 Hint</button>
-          <button class="btn btn-ghost" onclick="toggleQueryHistory()">Saved Queries</button>
+          <button class="hint-btn" onclick="showHint()" title="Costs your combo, not your XP">Hint</button>
+          <button class="btn btn-ghost" onclick="toggleQueryHistory()">History</button>
           <button class="btn btn-ghost" onclick="resetQuery()">Reset</button>
-          <button class="btn btn-primary" onclick="runQuery()" title="Ctrl/Cmd + Enter">▶ Run Query</button>
+          <button class="btn btn-primary" onclick="runQuery()" title="Ctrl/Cmd + Enter">Run query</button>
         </div>
       </div>
       <div class="exercise-bar" id="exercise-bar" style="display:none">
