@@ -8,7 +8,8 @@ const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 // Course content, in load order. data.js declares `curriculum` and `schemas`;
 // the add-on files extend them in place.
-const CONTENT_FILES = ['data.js', 'data-warehouse.js', 'course-dialects.js', 'course-warehouse.js'];
+const CONTENT_FILES = ['data.js', 'data-warehouse.js', 'course-dialects.js', 'course-warehouse.js',
+  'course-python-basics.js', 'course-python-data.js', 'course-python-pipelines.js'];
 
 function loadCourse() {
   const src = CONTENT_FILES.filter(f => fs.existsSync(path.join(ROOT, f))).map(read).join('\n;\n');

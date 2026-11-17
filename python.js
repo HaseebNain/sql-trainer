@@ -195,9 +195,64 @@ def _run_tests(tests, ns, out, src):
             raise CheckFail(f"{_code(label)} should raise {exc.__name__} - it raised {type(e).__name__} instead.")
         raise CheckFail(f"{_code(label)} should raise {exc.__name__} - it didn't raise anything.")
 
+    def rerun(**over):
+        """Run the learner's code again with some top-level variables given
+        different starting values - so a script (no functions yet) can still be
+        checked on inputs other than the ones in the starter."""
+        import ast
+        tree = ast.parse(src)
+        seen = set()
+        for node in tree.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id in over and node.targets[0].id not in seen):
+                name = node.targets[0].id
+                node.value = ast.parse(repr(over[name]), mode='eval').body
+                seen.add(name)
+        for name in over:
+            if name not in seen:
+                raise CheckFail(f"Keep the line that assigns {_code(name)} near the top of your code - the check changes its value to try other inputs.")
+        ast.fix_missing_locations(tree)
+        ns2 = {'__name__': '__main__', '__builtins__': builtins}
+        hold = sys.stdout
+        sys.stdout = cap = io.StringIO()
+        try:
+            exec(compile(tree, _FILE, 'exec'), ns2)
+        finally:
+            sys.stdout = hold
+        ns2['_out'] = cap.getvalue()
+        return ns2
+
+    def given(what, **over):
+        """rerun(), then compare variables: given({'status': 'green'}, yield_pct=99)"""
+        ns2 = rerun(**over)
+        setup = ', '.join(f"{k} = {_short(v, 60)}" for k, v in over.items())
+        for name, want in what.items():
+            if name not in ns2:
+                raise CheckFail(f"Create a variable named {_code(name)}.")
+            eq(ns2[name], want, f"With {_code(setup)}, {_code(name)}")
+        return ns2
+
+    def table(df, cols, what):
+        """A DataFrame's rows as plain dicts (floats rounded), after checking its shape."""
+        import pandas as pd
+        check(isinstance(df, pd.DataFrame), f"{what} should return a DataFrame - yours returned a {type(df).__name__}.")
+        check(list(df.columns) == list(cols), f"{what} should have exactly the columns {_code(list(cols))} - yours has {_code(list(df.columns))}.")
+        recs = []
+        for rec in df.to_dict('records'):
+            clean = {}
+            for k, v in rec.items():
+                if hasattr(v, 'item'):
+                    v = v.item()
+                if isinstance(v, float):
+                    v = round(v, 2)
+                clean[k] = v
+            recs.append(clean)
+        return recs
+
     env = dict(ns)
     env.update(_out=out, _src=src, check=check, eq=eq, var=var, fn=fn, printed=printed,
-               uses=uses, avoids=avoids, raises=raises, lines=lambda: _norm_lines(out))
+               uses=uses, avoids=avoids, raises=raises, lines=lambda: _norm_lines(out),
+               rerun=rerun, given=given, table=table, CheckFail=CheckFail)
     try:
         code = compile(tests, 'tests.py', 'exec')
         _local_trace.n = 0
@@ -251,6 +306,7 @@ def _quest_run(src, files_json, use_db, tests, want_out):
             if want_out is not None:
                 fail = _compare_output(out, want_out)
             if fail is None and tests:
+                sys.stdout = sys.stderr = io.StringIO()   # what the checks print is not the learner's output
                 fail = _run_tests(tests, ns, out, src)
     finally:
         sys.stdout, sys.stderr, builtins.input = old
