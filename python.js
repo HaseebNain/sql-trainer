@@ -396,6 +396,7 @@ def _quest_run(src, files_json, use_db, tests, want_out):
       }
       await py.loadPackage(p, { messageCallback: () => {} });
       py.runPython(`import ${p}`);   // pay the import cost once, outside any graded run
+      if (p === 'pandas') py.runPython("pandas.set_option('display.width', 160); pandas.set_option('display.max_columns', 30)");
       loadedBundles.add(p);
     }
   }

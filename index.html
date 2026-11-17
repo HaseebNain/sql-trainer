@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SQL Quest — Zero to Data Engineer</title>
+<title>SQL Quest — SQL &amp; Python, Zero to Data Engineer</title>
 <!-- Everything is local, fonts included (vendor/fonts): the app is fully offline. -->
 <link rel="stylesheet" href="vendor/codemirror.min.css">
 <link rel="stylesheet" href="vendor/show-hint.min.css">
@@ -140,6 +140,7 @@
 <script src="vendor/sql-mode.min.js"></script>
 <script src="vendor/show-hint.min.js"></script>
 <script src="vendor/sql-hint.min.js"></script>
+<script src="vendor/python-mode.js"></script>
 <script src="vendor/sql-wasm.js"></script>
 <script src="vendor/sql-wasm-b64.js"></script>
 <!-- Course content: data.js declares `curriculum` and `schemas`; the add-on
@@ -148,10 +149,16 @@
 <script src="data-warehouse.js"></script>
 <script src="course-dialects.js"></script>
 <script src="course-warehouse.js"></script>
+<script src="course-python-basics.js"></script>
+<script src="course-python-data.js"></script>
+<script src="course-python-pipelines.js"></script>
 <script src="refs.js"></script>
 <script src="engine.js"></script>
 <script src="explain.js"></script>
 <script src="dialect.js"></script>
+<!-- Python lessons: the runtime itself (vendor/pyodide/, ~7 MB) is only loaded
+     when a Python lesson is opened. -->
+<script src="python.js"></script>
 <script src="ai.js"></script>
 <script src="interview-bank.js"></script>
 <script src="app.js"></script>

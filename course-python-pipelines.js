@@ -758,6 +758,36 @@
           eq(run_pipeline("_next.csv", "shop.db"), {"rejected": 2, "table_rows": 6}, "What run_pipeline() returns for a second file (2 new stations, 1 correction, 2 bad rows)")
           eq([r[2] for r in _table() if r[0] == "W1" and r[1] == "2024-03-01 06:00"], [42.5], "The torque for W1 at 06:00 after the second file corrects it")
         `,
+        // Plausible near-misses that must not pass: INSERT OR IGNORE (the correction
+        // is dropped), and a plain INSERT (not idempotent).
+        _wrong:[ "IGNORE", "PLAIN" ].map(kind => py`
+          import csv, sqlite3
+
+          def clean(row):
+              station = row["station"].strip().upper()
+              if not station:
+                  raise ValueError("no station")
+              torque = float(row["torque"])
+              if not 0 < torque <= 100:
+                  raise ValueError("range")
+              return (station, row["ts"].strip(), torque)
+
+          def run_pipeline(csv_path, db_path):
+              good, rejected = [], 0
+              with open(csv_path, newline="") as f:
+                  for row in csv.DictReader(f):
+                      try:
+                          good.append(clean(row))
+                      except ValueError:
+                          rejected += 1
+              conn = sqlite3.connect(db_path)
+              conn.execute("CREATE TABLE IF NOT EXISTS torque_readings (station TEXT, ts TEXT, torque REAL" + (", PRIMARY KEY (station, ts))" if "KIND" == "IGNORE" else ")"))
+              conn.executemany("INSERT " + ("OR IGNORE " if "KIND" == "IGNORE" else "") + "INTO torque_readings VALUES (?, ?, ?)", good)
+              conn.commit()
+              n = conn.execute("SELECT COUNT(*) FROM torque_readings").fetchone()[0]
+              conn.close()
+              return {"rejected": rejected, "table_rows": n}
+        `.replace(/KIND/g, kind)),
         hint:"<strong>clean:</strong> <code>station = row[\"station\"].strip().upper()</code>, raise ValueError if empty; <code>torque = float(row[\"torque\"])</code> (raises ValueError on its own for junk); raise ValueError unless <code>0 < torque <= 100</code>; return <code>(station, row[\"ts\"].strip(), torque)</code>. <strong>load:</strong> connect, then inside <code>with conn:</code> run the <code>CREATE TABLE IF NOT EXISTS</code> and <code>conn.executemany(\"INSERT INTO torque_readings (station, ts, torque) VALUES (?, ?, ?) ON CONFLICT(station, ts) DO UPDATE SET torque = excluded.torque\", good)</code>; then <code>SELECT COUNT(*)</code>.", xp:120,
         exercises:[
           { id:"47.4.e1", prompt:"The report on top. Write <code>station_summary(db_path)</code>: from <code>torque_readings</code>, return a list of <code>(station, readings, avg_torque)</code> — average rounded to 2 decimals — ordered by station. (The starter builds a small table to try it on.)",

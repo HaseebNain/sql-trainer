@@ -462,6 +462,11 @@ const PyCourse = (() => {
           given({"value": 2.5}, reading=2.5)
           given({"value": 0}, reading=0)
         `,
+        _wrong:[ py`
+          reading = None
+          default = -1.0
+          value = reading or default
+        ` ],
         hint:"<code>value = reading if reading is not None else default</code>. Don't use <code>reading or default</code> — it throws away a reading of 0.", xp:25,
         exercises:[
           { id:"41.4.e1", prompt:"Set <code>label</code> to <code>name</code> with the outside spaces removed — or to <code>\"unknown\"</code> if nothing is left.",
