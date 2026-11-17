@@ -2,7 +2,7 @@
 // that the old text matcher rejects, without accepting wrong answers.
 // Run with: node tools/engine-test.js
 const { loadCourse, initSql } = require('./load');
-const { curriculum, SqlEngine } = loadCourse();
+const { sqlCurriculum: curriculum, SqlEngine } = loadCourse();
 
 // Old text matcher (mirrors app.js checkSolution fast path).
 function textMatches(sql, solutions) {

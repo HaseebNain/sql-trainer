@@ -1,18 +1,18 @@
 # SQL Quest — Zero to Data Engineer
 
-A gamified, fully interactive SQL course that runs entirely in your browser — **and entirely offline**. Open `index.html` and go from your first `SELECT` to building a warehouse and passing the interview, over 39 days. No installs, no accounts, no backend, no network: queries run against a real in-browser SQLite database (sql.js/WASM, bundled locally).
+A gamified, fully interactive SQL **and Python** course that runs entirely in your browser — **and entirely offline**. Open `index.html` and go from your first `SELECT` to building a warehouse, passing the interview, and writing the Python pipeline that loads it, over 48 days. No installs, no accounts, no backend, no network: queries run against a real in-browser SQLite database (sql.js/WASM), Python runs on a real CPython interpreter (Pyodide/WASM), both bundled locally.
 
 ## Quick Start
 
 1. Clone or download this folder.
 2. Open `index.html` in any modern browser (double-clicking the file works — the app is built to run from `file://`).
-3. Read the lesson, write the query, hit **Run** (or `Ctrl/Cmd + Enter`).
+3. Read the lesson, write the query (or, from Day 40, the Python), hit **Run** (or `Ctrl/Cmd + Enter`).
 
 Progress, XP, streaks, and achievements persist in `localStorage`.
 
 ## The Course
 
-39 days, 141 lessons, 230+ XP-earning practice exercises:
+48 days, 177 lessons, 269 XP-earning practice exercises:
 
 | Days | Track |
 |------|-------|
@@ -30,8 +30,12 @@ Progress, XP, streaks, and achievements persist in `localStorage`.
 | 28 | The Interview Gauntlet — top-N per group, Nth-highest, group-average classics |
 | **29–31** | **Warehouse dialects — the same query in SQLite, Snowflake and BigQuery** |
 | **32–39** | **Capstone — build the plant-floor warehouse, raw → staging → marts** |
+| **40–43** | **Python — values, control flow, lists / dicts / sets, functions, comprehensions** |
+| **44–45** | **Python for data — exceptions & validation, dates, the standard library, CSV & JSON** |
+| **46–47** | **Python + SQL — `sqlite3`, parameters, transactions, generators, an idempotent pipeline end to end** |
+| **48** | **pandas — DataFrames mapped onto the SQL you already write** |
 
-Days 1–21 cover what a junior SQL screen tests. Days 22–28 cover what the *job* is. Days 29–39 are the job itself, on realistic data.
+Days 1–21 cover what a junior SQL screen tests. Days 22–28 cover what the *job* is. Days 29–39 are the job itself, on realistic data. Days 40–48 add the other half of every data-engineering posting: Python.
 
 ### Warehouse dialects (Days 29–31)
 
@@ -55,17 +59,28 @@ One project on a deliberately messy manufacturing dataset — "Ridgeline Compone
 
 You profile it, build staging views, convert units, quarantine bad rows, model dimensions (including an SCD Type 2 built from snapshots) and facts, write an incremental upsert and an idempotent backfill, add data-quality tests, and finish with KPI marts and a week-over-week yield alert. Each lesson pre-builds the *official* version of every upstream model, so a mistake on Day 33 can't follow you to Day 36.
 
+### Python (Days 40–48)
+
+Written for someone who already knows SQL: every idea is introduced next to the SQL it replaces or drives (`if` ↔ `CASE WHEN`, a comprehension ↔ `SELECT … WHERE`, `Counter` ↔ `GROUP BY`, flattening JSON ↔ `LATERAL FLATTEN`, `merge` ↔ `JOIN`).
+
+- **A real interpreter.** CPython 3.13 via [Pyodide](https://pyodide.org), with the standard library, `sqlite3` and `pandas`. It starts the first time you open a Python lesson (a few seconds, once per visit); pandas loads only on Day 48.
+- **It checks what your code does, not how it's written.** A lesson passes when your output matches the reference's and/or your functions behave correctly on inputs you haven't seen — empty lists, a `0` that isn't missing, a name with a quote in it. A miss tells you which case failed and what it expected.
+- **Errors are explained.** The failing line is highlighted, with a plain-language note on what that error usually means. A loop that never ends is stopped for you.
+- **Files and a database to work on.** Lessons come with CSV / JSON / log files in a working folder (click a file pill to read it), and from Day 46 `shop.db` — the same practice database as the SQL days, as a SQLite file. Every run starts from fresh copies.
+- **It ends with a job.** Day 47's capstone is a complete batch pipeline: read a messy plant-floor CSV, validate and reject bad rows, upsert the rest in one transaction, and survive being run twice.
+- Your code is kept per lesson, so leaving and coming back doesn't lose it; **Reset** returns to the starter.
+
 ## The App
 
-- **Fully offline** — CodeMirror and sql.js are vendored in `vendor/`; the SQLite WASM binary is embedded as base64 so it loads even from `file://`. The fonts (Bricolage Grotesque, IBM Plex Sans and Mono — SIL OFL) are bundled in `vendor/fonts/` too, so nothing is fetched from the network.
-- **Today** — the screen you come back to: a lamp for each of the last seven days, your streak, the next lesson, the daily challenge, and progress through the six stages of the course. It opens once a day; click the logo to see it any time.
+- **Fully offline** — CodeMirror, sql.js and Pyodide are vendored in `vendor/`; the SQLite WASM binary is embedded as base64 so it loads even from `file://`. The fonts (Bricolage Grotesque, IBM Plex Sans and Mono — SIL OFL) are bundled in `vendor/fonts/` too, so nothing is fetched from the network. Pyodide's binaries (interpreter, standard library, sqlite3, pandas — about 19 MB in `vendor/pyodide/`) are embedded the same way and loaded only when a Python lesson needs them.
+- **Today** — the screen you come back to: a lamp for each of the last seven days, your streak, the next lesson, the daily challenge, and progress through the seven stages of the course. It opens once a day; click the logo to see it any time.
 - **Your route** — the sidebar shows the course as stations on a line, grouped by stage; a station's ring fills as you finish its lessons.
 - **It tells you *why* a query is wrong** — a wrong answer gets a diagnosis instead of a red X: "2 expected rows are missing — all with NULL in `manager`: an INNER JOIN drops them", a join fan-out, right rows in the wrong order, a missing `ROUND`, integer division, ×100, `SELECT *` instead of named columns. Deterministic, **no AI involved** (see below).
 - **Mock interviews** 🎤 — timed problems from a graded bank (SQL screen, data engineering, or mixed), follow-up questions, and a scorecard with a review list. Run it **solo** (scripted follow-ups, model answers to rate yourself against) or with an **AI interviewer**.
 - **AI Tutor & interviewer — on a local model if you like** — optional, and not tied to a subscription. Point it at any OpenAI-compatible local server (**Ollama**, **LM Studio**, llama.cpp, Jan) for a free, offline tutor, or at the Anthropic API with your own key. The AI is never asked whether your SQL is correct; the engine decides that.
 - **Course Map** (`Ctrl+K`) — jump to any day; collapsible per-day sidebar with live progress.
 - **Light & dark themes**, keyboard shortcuts (`Ctrl+/` for the list), CSV export of any result set, per-query timing, and a **↺ Reset data** button that rebuilds the practice database after your DDL/DML experiments.
-- **Gamification** — XP with 17 levels (*Row Rookie* → *Distinguished Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 32 achievements 🏆.
+- **Gamification** — XP with 18 levels (*Row Rookie* → *Two-Language Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 37 achievements 🏆.
 - **Data Engineer Readiness report** 📈 — click your level badge for per-skill progress mapped to real job requirements.
 - **Update check** — the version badge in the top bar checks GitHub for a newer release and, when you're online, tells you how to update (`git pull` or re-download). It's best-effort and fails silently offline; your saved XP/progress survive updates.
 
@@ -86,6 +101,10 @@ A page opened in a browser needs the server's permission to call it (CORS). If t
 | `data-warehouse.js` | The capstone's `raw_*` tables — **generated** by `tools/gen-warehouse.js` |
 | `course-dialects.js` | Days 29–31, with inline references and translation targets |
 | `course-warehouse.js` | Days 32–39, with inline references and the official model definitions |
+| `course-python-basics.js` | Days 40–42 (and the lesson-format notes for the whole Python track) |
+| `course-python-data.js` | Days 43–45 — functions, errors, files |
+| `course-python-pipelines.js` | Days 46–48 — sqlite3, the pipeline capstone, pandas |
+| `python.js` | Python runtime and grader — starts Pyodide, runs code in a clean namespace and folder, checks output and behaviour |
 | `refs.js` | Authored reference answers for Days 1–28 |
 | `engine.js` | Result-set validator — grades a query by the *results* it produces |
 | `explain.js` | Wrong-answer explainer — diffs a result against the reference and names the mistake |
@@ -95,8 +114,11 @@ A page opened in a browser needs the server's permission to call it (CORS). If t
 | `interview.js` | The interview room, scoring and scorecard |
 | `app.js` | App engine — SQL runner, grading flow, gamification, navigation, AI tutor |
 | `vendor/` | CodeMirror + sql.js, vendored for offline use |
+| `vendor/pyodide/` | Pyodide 0.29.5 (CPython 3.13) with sqlite3 and pandas, embedded as base64 — **generated** by `tools/build-pyodide-vendor.js` |
 | `tools/load.js` | Shared loader — gives the Node tools the same course the browser gets |
 | `tools/verify.js` | Authoritative gate: starters run, every lesson, translation and interview problem self-validates |
+| `tools/verify-python.js` | Gate for the Python track: every reference passes, every starter (and an empty editor) does not — on the real interpreter |
+| `tools/py-load.js` | Starts the vendored Pyodide under Node for the tools |
 | `tools/verify-refs.js` | Focused report of reference coverage / self-validation |
 | `tools/engine-test.js` | Checks the validator accepts equivalents / rejects wrong answers |
 | `tools/explain-test.js` | Checks each kind of mistake gets the right diagnosis |
@@ -143,6 +165,17 @@ Days 1–7 without a `refs.js` entry fall back to a derived reference (the
 correctly-cased `starter` plus quote-free `solution` variants). `node
 tools/verify.js` fails if any lesson lacks a self-validating reference.
 
+### How Python answers are validated
+
+Python lessons (`lang: 'python'`) are graded by `python.js` on the same principle — behaviour, not text:
+
+- **`out: true`** — the printed output must equal what the lesson's `ref` prints (trailing whitespace ignored). A mismatch names the first differing line.
+- **`tests`** — Python run after the learner's code, in its namespace, with small helpers: `eq(got, want, what)`, `var(name, want)`, `raises(Exc, f, *args)`, `check(cond, msg)`, and `given({...}, name=value)` which re-runs a script with different starting values so lessons before `def` are still checked on more than one input. The first failed check is the message the learner sees.
+- **`files`** / **`db: true`** — a working folder rebuilt before every run, optionally with `shop.db`.
+- A step limit stops runaway loops; `input()` and the network are unavailable.
+
+The format is documented at the top of `course-python-basics.js`.
+
 ### How wrong answers are explained
 
 `explain.js` re-runs the query and the closest reference, lines the two result
@@ -167,6 +200,7 @@ Then run:
 
 ```
 node tools/verify.js        # authoritative gate — must be 0 errors
+node tools/verify-python.js # the Python track's gate (starts Pyodide, ~30 s)
 node tools/verify-refs.js   # reference coverage detail
 node tools/engine-test.js   # equivalence accepted / wrong answers rejected
 node tools/explain-test.js  # each mistake gets the right diagnosis

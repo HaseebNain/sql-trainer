@@ -15,6 +15,12 @@ let translationsDone = new Set();
 let translateMode = null;          // index into currentLesson.translate while translating, else null
 let lastDiagnosis = '';            // plain-text summary of the latest wrong-answer explanation (AI tutor context)
 
+// Python lessons (`lang: 'python'`, course-python-*.js) run on Pyodide via
+// python.js instead of the SQL engine. Everything else — XP, streaks, the
+// route, exercises, hints, the tutor — is shared.
+function isPy(spec) { return !!spec && spec.lang === 'python'; }
+let pyBusy = false;
+
 // ── Gamification state ──
 let streak = 0, lastActiveDate = null;
 let queriesRun = 0, hintsUsed = 0, errorsMade = 0;
@@ -45,12 +51,13 @@ const QUERY_HISTORY_KEY = 'sql_bootcamp_query_history';
 // Bump APP_VERSION and version.json together on every release. The app is
 // offline-first; the update check is a best-effort network call that fails
 // silently when offline.
-const APP_VERSION = '1.2.0';
-const REPO_URL = 'https://github.com/HaseebNain/slq-trainer';
-const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/HaseebNain/slq-trainer/master/version.json';
+const APP_VERSION = '1.3.0';
+const REPO_URL = 'https://github.com/HaseebNain/sql-trainer';
+const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/HaseebNain/sql-trainer/master/version.json';
 
-// ── Levels (calibrated to ~7,000 XP available across all 39 days, before
-// combo / daily / interview bonuses) ──
+// ── Levels (calibrated to ~8,700 XP available across all 48 days — ~7,000 in
+// the SQL days, ~1,700 in the Python days — before combo / daily / interview
+// bonuses) ──
 const LEVELS = [
   { xp: 0,    title: "Row Rookie" },
   { xp: 60,   title: "SELECT Apprentice" },
@@ -68,7 +75,8 @@ const LEVELS = [
   { xp: 4700, title: "Analytics Engineer" },
   { xp: 5500, title: "Principal Data Engineer" },
   { xp: 6400, title: "Warehouse Architect" },
-  { xp: 7400, title: "Distinguished Data Engineer" }
+  { xp: 7400, title: "Distinguished Data Engineer" },
+  { xp: 8500, title: "Two-Language Data Engineer" }
 ];
 
 // ── Achievements ──
@@ -103,6 +111,11 @@ const ACHIEVEMENTS = [
   { id:"mess-tamer",    icon:"🧽", name:"Mess Tamer",           desc:"Complete Days 32–34 — profile, stage and quarantine the raw plant data.", when:() => [32,33,34].every(dayComplete) },
   { id:"wh-builder",    icon:"🏭", name:"Warehouse Builder",    desc:"Complete Days 35–37 — dimensions, facts and the incremental load.", when:() => [35,36,37].every(dayComplete) },
   { id:"shipped",       icon:"🚢", name:"Shipped It",           desc:"Finish the capstone — the whole plant-floor warehouse (Days 32–39).", when:() => [32,33,34,35,36,37,38,39].every(dayComplete) },
+  { id:"py-hello",      icon:"🐍", name:"Hello, Python",        desc:"Complete your first Python lesson.",                  when:() => curriculum.some(d => d.lessons.some(l => isPy(l) && completedLessons.has(l.id))) },
+  { id:"pythonista",    icon:"🧪", name:"Pythonista",           desc:"Complete Days 40–43 — the Python language itself.",   when:() => [40,41,42,43].every(dayComplete) },
+  { id:"file-wrangler", icon:"🗂️", name:"File Wrangler",        desc:"Complete Days 44–45 — errors, dates, CSV and JSON.",  when:() => [44,45].every(dayComplete) },
+  { id:"py-pipeline",   icon:"🛠️", name:"Pipeline in Production", desc:"Complete Days 46–47 — Python driving SQL, and an idempotent pipeline end to end.", when:() => [46,47].every(dayComplete) },
+  { id:"bilingual",     icon:"🌐", name:"Two Languages",        desc:"Finish the whole Python track (Days 40–48).",         when:() => [40,41,42,43,44,45,46,47,48].every(dayComplete) },
   { id:"interview-1",   icon:"🎤", name:"In the Hot Seat",      desc:"Finish your first mock interview.",                   when:() => typeof Interview !== 'undefined' && Interview.stats().count >= 1 },
   { id:"hire-signal",   icon:"🤝", name:"Strong Hire",          desc:"Score 85 or higher in a mock interview.",             when:() => typeof Interview !== 'undefined' && Interview.stats().best >= 85 },
 ];
@@ -121,7 +134,10 @@ const SKILL_TRACKS = [
   { name:"ELT & Data Quality",      icon:"🔄", days:[26,27],        blurb:"Incremental loads, upserts, SCD2, dedup, and dbt-style data tests — the daily job of a DE." },
   { name:"Interview Readiness",     icon:"⚔️", days:[28],           blurb:"Top-N per group, gaps & islands, dedup classics — the exact patterns interviewers ask." },
   { name:"Warehouse Dialects",      icon:"🗣️", days:[29,30,31],     blurb:"QUALIFY, MERGE, UNNEST / FLATTEN, date functions — writing the same query for Snowflake and BigQuery." },
-  { name:"Warehouse Build (Capstone)", icon:"🏭", days:[32,33,34,35,36,37,38,39], blurb:"Raw → staging → dims & facts → marts on messy plant-floor data, with an incremental load and data tests. The actual job." }
+  { name:"Warehouse Build (Capstone)", icon:"🏭", days:[32,33,34,35,36,37,38,39], blurb:"Raw → staging → dims & facts → marts on messy plant-floor data, with an incremental load and data tests. The actual job." },
+  { name:"Python Fundamentals",     icon:"🐍", days:[40,41,42,43],  blurb:"Variables, control flow, lists / dicts / sets, functions and comprehensions — the Python every DE posting lists next to SQL." },
+  { name:"Python for Data",         icon:"🗂️", days:[44,45],        blurb:"Exceptions and validation, dates, the standard library, CSV and JSON — reading the messy files pipelines start from." },
+  { name:"Python Pipelines & pandas", icon:"🛠️", days:[46,47,48],   blurb:"sqlite3 with parameters and transactions, generators, an idempotent extract-validate-load job, and pandas mapped onto SQL." }
 ];
 
 function totalLessonCount()  { return curriculum.reduce((n, d) => n + d.lessons.length, 0); }
@@ -541,6 +557,7 @@ function buildQuizPool() {
   const pool = [];
   for (const day of curriculum) {
     for (const l of day.lessons) {
+      if (isPy(l)) continue;           // the quiz checks SQL result sets
       if (completedLessons.has(l.id)) {
         pool.push({ kind: 'lesson', lesson: l, day: day.day, prompt: l.task, tables: l.tables || [] });
       }
@@ -849,19 +866,21 @@ function loadExerciseByIndex(idx) {
 
 function loadExercise(ex) {
   if (translateMode !== null) exitTranslation();
+  stashPyDraft();
   currentExercise = ex;
-  if (editor) editor.setValue('');
+  if (editor) editor.setValue(isPy(ex) ? pyDraftFor(ex) : '');
   showEmpty();
   const bar = document.getElementById('exercise-bar');
   bar.style.display = 'flex';
-  document.getElementById('exercise-bar-text').textContent = ex.prompt;
+  document.getElementById('exercise-bar-text').innerHTML = ex.prompt;
   renderExercisesList();
 }
 
 function clearExercise() {
+  stashPyDraft();
   currentExercise = null;
   document.getElementById('exercise-bar').style.display = 'none';
-  if (editor) editor.setValue('');
+  if (editor) editor.setValue(isPy(currentLesson) ? pyDraftFor(currentLesson) : '');
   showEmpty();
   renderExercisesList();
 }
@@ -939,6 +958,8 @@ function creditExercise(ex) {
     const existing = document.getElementById('output-content').innerHTML;
     document.getElementById('output-content').innerHTML =
       `<div class="feedback-box feedback-success"><div class="feedback-label">🎯 Daily Challenge! +${dailyBonus} XP</div>Solved again for the daily bonus. See you tomorrow.</div><hr class="divider">${existing}`;
+  } else if (isPy(ex)) {
+    prependOutput(`<div class="feedback-box feedback-success"><div class="feedback-label">✓ Passes</div>Still correct — you've already earned this exercise's XP.</div>`);
   }
 }
 
@@ -1004,6 +1025,7 @@ function renderExercisesList() {
 // the lesson since buildHintTables runs on every keystroke.
 function relevantTables(lesson) {
   if (!lesson) return Object.keys(schemas);
+  if (isPy(lesson)) return lesson.tables || [];     // prose like "orders" is not a table reference there
   if (lesson._relTables) return lesson._relTables;
   const set = new Set(lesson.tables || []);
   const parts = [lesson.task || ''];
@@ -1233,10 +1255,15 @@ function initEditor() {
     extraKeys: {
       'Ctrl-Enter': runQuery,
       'Cmd-Enter': runQuery,
-      'Ctrl-Space': cm => CodeMirror.showHint(cm, sqlHint, { completeSingle: false })
+      'Ctrl-Space': cm => { if (!isPy(currentLesson)) CodeMirror.showHint(cm, sqlHint, { completeSingle: false }); },
+      // Tab indents with spaces (a real tab character is a TabError waiting to happen in Python).
+      'Tab': cm => cm.somethingSelected() ? cm.execCommand('indentMore') : cm.execCommand('insertSoftTab'),
+      'Shift-Tab': cm => cm.execCommand('indentLess')
     }
   });
+  editor.on('change', () => clearPyErrorLine());
   editor.on('inputRead', (cm, event) => {
+    if (isPy(currentLesson)) return;   // SQL autocomplete only
     // Auto-suggest as you type a word or after a dot; the ranking is handled by
     // sqlHint so the top item matches the current clause.
     if (!cm.state.completionActive && event.text[0] && /[\w.]/.test(event.text[0])) {
@@ -1245,13 +1272,25 @@ function initEditor() {
   });
 }
 
+function seedInto(d) {
+  for (const tbl of Object.values(schemas)) {
+    d.run(tbl.create);
+    for (const ins of tbl.insert) d.run(ins);
+  }
+}
 function seedDatabase(SQL) {
   if (db) db.close();
   db = new SQL.Database();
-  for (const tbl of Object.values(schemas)) {
-    db.run(tbl.create);
-    for (const ins of tbl.insert) db.run(ins);
-  }
+  seedInto(db);
+}
+// `shop.db` for Python lessons: the practice database as a SQLite file, always
+// freshly seeded (never the live one, which the learner may have changed).
+function shopDbBytes() {
+  const d = new sqlModule.Database();
+  seedInto(d);
+  const bytes = d.export();
+  d.close();
+  return bytes;
 }
 
 let sqlModule = null;
@@ -1280,6 +1319,8 @@ async function initDB() {
   sqlModule = SQL;
   SqlEngine.init(SQL);
   seedDatabase(SQL);
+  if (typeof PyRunner !== 'undefined') PyRunner.setDbProvider(shopDbBytes);
+  window.addEventListener('beforeunload', stashPyDraft);
   const savedLessonId = loadProgress();
   initEditor();
   initResize();
@@ -1347,7 +1388,8 @@ const COURSE_SECTIONS = [
   { label: 'Analytics engineering', short: 'Analytics', from: 17, to: 21 },
   { label: 'Data engineering', short: 'Engineering', from: 22, to: 28 },
   { label: 'Snowflake and BigQuery dialects', short: 'Dialects', from: 29, to: 31 },
-  { label: 'Capstone: the plant-floor warehouse', short: 'Capstone', from: 32, to: 99 }
+  { label: 'Capstone: the plant-floor warehouse', short: 'Capstone', from: 32, to: 39 },
+  { label: 'Python for data engineers', short: 'Python', from: 40, to: 99 }
 ];
 
 function openCourseMap() {
@@ -1547,10 +1589,10 @@ function showWelcome() {
     <div class="welcome-hero">
       <div class="welcome-logo">SQL</div>
       <div class="welcome-title">Welcome to SQL Quest</div>
-      <div class="welcome-sub">Go from your first <code style="font-family:var(--mono)">SELECT</code> to job-ready Analytics / Data Engineer skills. Everything runs in your browser against a real SQLite database — fully offline, nothing to install.</div>
+      <div class="welcome-sub">Go from your first <code style="font-family:var(--mono)">SELECT</code> to job-ready Analytics / Data Engineer skills — SQL first, then the Python that drives it. Everything runs in your browser, against a real SQLite database and a real Python interpreter — fully offline, nothing to install.</div>
     </div>
     <div class="welcome-feats">
-      <div class="welcome-feat"><span class="welcome-feat-icon">📚</span><div><div class="welcome-feat-name">${curriculum.length}-day curriculum</div><div class="welcome-feat-desc">Querying → joins → windows → modeling &amp; ELT → Snowflake / BigQuery dialects → a full warehouse capstone.</div></div></div>
+      <div class="welcome-feat"><span class="welcome-feat-icon">📚</span><div><div class="welcome-feat-name">${curriculum.length}-day curriculum</div><div class="welcome-feat-desc">Querying → joins → windows → modeling &amp; ELT → Snowflake / BigQuery dialects → a full warehouse capstone → Python, pipelines and pandas.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">▶</span><div><div class="welcome-feat-name">Real SQL, instantly</div><div class="welcome-feat-desc">Write a query, press Ctrl+Enter, see real results. Break things freely — reset data anytime.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">⚡</span><div><div class="welcome-feat-name">XP, streaks &amp; combos</div><div class="welcome-feat-desc">Level from Row Rookie to Principal Data Engineer. Progress saves automatically.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">📈</span><div><div class="welcome-feat-name">Readiness report</div><div class="welcome-feat-desc">Click your level badge to see per-skill progress mapped to real job requirements.</div></div></div>
@@ -1634,9 +1676,12 @@ function updateSidebarProgress() {
 }
 
 function loadLesson(lesson) {
+  stashPyDraft();
   currentLesson = lesson;
   currentDay = curriculum.findIndex(d => d.lessons.includes(lesson));
   updateDayNav();
+  const py = isPy(lesson);
+  setEditorLanguage(py);
 
   translateMode = null;
   lastDiagnosis = '';
@@ -1644,7 +1689,11 @@ function loadLesson(lesson) {
 
   const schemaPills = document.getElementById('schema-pills');
   schemaPills.innerHTML = relevantTables(lesson).map(t => `<span class="schema-pill" onclick="showSchema('${t}')">${t}</span>`).join('') +
-    lessonModels(lesson).map(t => `<span class="schema-pill model" onclick="showSchema('${t}')" title="Pre-built for this lesson">◆ ${t}</span>`).join('');
+    lessonModels(lesson).map(t => `<span class="schema-pill model" onclick="showSchema('${t}')" title="Pre-built for this lesson">◆ ${t}</span>`).join('') +
+    Object.keys(lesson.files || {}).map(f => `<span class="schema-pill file" onclick="showLessonFile('${f}')" title="A file in this lesson's working folder — click to view it">${f}</span>`).join('') +
+    (py && lesson.db ? `<span class="schema-pill file" onclick="showLessonFile('shop.db')" title="A fresh copy of the practice database, in the working folder">shop.db</span>` : '');
+  const reseed = document.querySelector('.reseed-btn');
+  if (reseed) reseed.style.display = py ? 'none' : '';
 
   const dayData = curriculum.find(d => d.lessons.includes(lesson));
   const total = curriculum.flatMap(d => d.lessons).length;
@@ -1656,6 +1705,7 @@ function loadLesson(lesson) {
   document.getElementById('lesson-panel').innerHTML = `
     <div class="lesson-meta">
       <span class="lesson-meta-day">Day ${dayData.day}</span>
+      ${py ? '<span class="lang-tag">Python</span>' : ''}
       <span>${dayData.title}</span>
       <span>Lesson ${dayData.lessons.indexOf(lesson) + 1} of ${dayData.lessons.length}</span>
       <span class="lesson-meta-xp${completedLessons.has(lesson.id) ? ' earned' : ''}">${completedLessons.has(lesson.id) ? '✓ ' : ''}${lesson.xp} XP</span>
@@ -1674,17 +1724,21 @@ function loadLesson(lesson) {
     <div id="exercises-list"></div>
   `;
 
-  if (editor) editor.setValue('');
+  if (editor) { editor.setValue(py ? pyDraftFor(lesson) : ''); editor.clearHistory(); }
+  lastResults = null;
   showEmpty();
   buildSidebar();
   renderExercisesList();
   renderTranslatePanel();
   saveProgress();
+  if (py) warmPython(lesson);
 }
 
 function showEmpty() {
-  document.getElementById('output-content').innerHTML = `<div class="empty-state"><div class="empty-icon">▶</div><div>Run your query to see results</div><div style="margin-top:4px"><span class="kbd">Ctrl</span> <span class="kbd">Enter</span></div></div>`;
+  const py = isPy(currentLesson);
+  document.getElementById('output-content').innerHTML = `<div class="empty-state"><div class="empty-icon">▶</div><div>${py ? 'Run your code to see what it prints' : 'Run your query to see results'}</div><div style="margin-top:4px"><span class="kbd">Ctrl</span> <span class="kbd">Enter</span></div>${py ? '<div class="py-status" id="py-status"></div>' : ''}</div>`;
   document.getElementById('row-count').style.display = 'none';
+  if (py) setPyStatus(pyStatusText);
 }
 
 let lastExecMs = null;
@@ -1709,6 +1763,7 @@ function resultColumnsFor(sql) {
 
 function runQuery() {
   if (!db || !currentLesson) return;
+  if (isPy(currentLesson)) { runPython(); return; }
   if (translateMode !== null) { checkTranslation(); return; }
   const sql = editor ? editor.getValue().trim() : '';
   if (!sql) return;
@@ -1837,7 +1892,7 @@ function completeLesson(lesson) {
   playSound('correct');
   const next = getNextLesson();
   const comboNote = combo >= 3 ? ` <span style="color:var(--amber)">🔥 ${combo}× combo</span>` : '';
-  let html = `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct! +${earned} XP${comboNote}</div>${lesson.translate ? 'Both versions done — you can write this one in any warehouse.' : 'Well done! Your query works perfectly.'}</div>`;
+  let html = `<div class="feedback-box feedback-success"><div class="feedback-label">✓ Correct! +${earned} XP${comboNote}</div>${lesson.translate ? 'Both versions done — you can write this one in any warehouse.' : isPy(lesson) ? 'Well done — it does exactly what was asked, on every input the check tried.' : 'Well done! Your query works perfectly.'}</div>`;
   if (next) {
     html += `<button class="next-btn" onclick="loadLesson(getNextLesson())">Next Lesson →</button>`;
   } else {
@@ -1908,7 +1963,8 @@ function updateRunButton() {
   const btn = document.querySelector('.editor-buttons .btn-primary');
   if (!btn) return;
   const tr = translateMode !== null && currentLesson && currentLesson.translate ? currentLesson.translate[translateMode] : null;
-  btn.textContent = tr ? `Check ${DialectCheck.labelFor(tr)}` : 'Run query';
+  btn.textContent = pyBusy ? 'Running…' : tr ? `Check ${DialectCheck.labelFor(tr)}` : isPy(currentLesson) ? 'Run code' : 'Run query';
+  btn.disabled = pyBusy;
   btn.classList.toggle('checking', !!tr);
   const wrap = document.getElementById('sql-editor-wrap');
   if (wrap) wrap.classList.toggle('translating', !!tr);
@@ -2012,7 +2068,17 @@ function escapeHint(h) {
 }
 
 function resetQuery() {
-  if (currentLesson && editor) { editor.setValue(currentLesson.starter); showEmpty(); }
+  if (!currentLesson || !editor) return;
+  if (isPy(currentLesson)) {
+    // Back to the starter for whatever is in the editor (lesson or exercise), dropping the saved draft.
+    const spec = currentExercise || currentLesson;
+    delete pyDrafts[spec.id];
+    savePyDrafts();
+    editor.setValue(spec.starter || '');
+  } else {
+    editor.setValue(currentLesson.starter);
+  }
+  showEmpty();
 }
 
 function showSchema(tableName) {
@@ -2056,11 +2122,168 @@ function switchTab(name, el) {
   document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
   if (el) el.classList.add('active');
   if (name === 'ai') renderAITab();
-  else if (name === 'schema' && currentLesson) showSchema(currentLesson.tables[0]);
+  else if (name === 'schema' && currentLesson) {
+    if (currentLesson.tables && currentLesson.tables.length) showSchema(currentLesson.tables[0]);
+    else showLessonFile(Object.keys(currentLesson.files || {})[0]);
+  }
   else if (name === 'results') {
     if (lastResults) renderTable(lastResults.columns, lastResults.values);
     else showEmpty();
   }
+}
+
+// ── Python lessons ──
+// Drafts: Python answers run to many lines, so what's in the editor is kept per
+// lesson / exercise (localStorage) and restored when you come back. "Reset"
+// returns to the starter.
+const PY_DRAFTS_KEY = 'sql_bootcamp_py_drafts';
+let pyDrafts = {};
+try { pyDrafts = JSON.parse(localStorage.getItem(PY_DRAFTS_KEY) || '{}') || {}; } catch { pyDrafts = {}; }
+function savePyDrafts() { try { localStorage.setItem(PY_DRAFTS_KEY, JSON.stringify(pyDrafts)); } catch {} }
+function pyDraftFor(spec) { return pyDrafts[spec.id] !== undefined ? pyDrafts[spec.id] : (spec.starter || ''); }
+function stashPyDraft() {
+  if (!editor || !isPy(currentLesson)) return;
+  const spec = currentExercise || currentLesson;
+  const code = editor.getValue();
+  if (code === (spec.starter || '')) delete pyDrafts[spec.id]; else pyDrafts[spec.id] = code;
+  savePyDrafts();
+}
+
+function setEditorLanguage(py) {
+  if (!editor) return;
+  editor.setOption('mode', py ? 'python' : 'text/x-sql');
+  editor.setOption('indentUnit', py ? 4 : 2);
+  editor.setOption('tabSize', py ? 4 : 2);
+  const wrap = document.getElementById('sql-editor-wrap');
+  if (wrap) wrap.classList.toggle('py-mode', py);
+  updateRunButton();
+}
+
+// Start the interpreter in the background as soon as a Python lesson opens, so
+// the first Run doesn't pay for it.
+let pyStatusText = '';
+function setPyStatus(text) {
+  pyStatusText = text || '';
+  const el = document.getElementById('py-status');
+  if (el) el.textContent = pyStatusText;
+}
+async function ensurePython(lesson) {
+  if (typeof PyRunner === 'undefined') throw new Error('python.js is not loaded');
+  if (!PyRunner.ready()) setPyStatus('Starting Python — a few seconds, once per visit…');
+  await PyRunner.load(setPyStatus);
+  await PyRunner.ensurePackages(lesson.pkgs, setPyStatus);
+  setPyStatus('Python is ready.');
+}
+function warmPython(lesson) {
+  ensurePython(lesson).catch(e => setPyStatus('Python could not start: ' + e.message));
+}
+
+let pyErrorLine = null;
+function clearPyErrorLine() {
+  if (pyErrorLine !== null && editor) { editor.removeLineClass(pyErrorLine, 'background', 'py-error-line'); }
+  pyErrorLine = null;
+}
+function markPyErrorLine(line) {
+  clearPyErrorLine();
+  if (!editor || !line || line < 1 || line > editor.lineCount()) return;
+  pyErrorLine = editor.addLineClass(line - 1, 'background', 'py-error-line');
+}
+
+// `code` in a check message → <code>, everything else escaped.
+function formatPyMessage(msg) {
+  return escapeHtml(msg || '').replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function renderPyOutput(g, ms) {
+  activeTab = 'results';
+  document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.output-tab')[0].classList.add('active');
+  document.getElementById('row-count').style.display = 'none';
+  lastResults = null;
+  const timing = ms != null ? ` · ${ms < 1 ? '<1' : Math.round(ms)} ms` : '';
+  const out = g.out
+    ? `<pre class="py-console">${escapeHtml(g.out)}</pre>`
+    : `<div class="py-console empty">${g.error ? 'Nothing was printed before the error.' : 'Nothing was printed. Use print(...) to see a value.'}</div>`;
+  let html = '';
+  if (g.error) {
+    const e = g.error;
+    const where = e.line ? ` on line ${e.line}` : '';
+    html += `<div class="feedback-box feedback-error"><div class="feedback-label">${escapeHtml(e.type)}${where}</div><div class="py-error-msg">${escapeHtml(e.msg)}</div>${e.tip ? `<div class="py-error-tip">${escapeHtml(e.tip)}</div>` : ''}</div>`;
+  }
+  html += `<div class="py-out-label">Output${timing}</div>${out}`;
+  document.getElementById('output-content').innerHTML = html;
+}
+
+async function runPython() {
+  if (pyBusy || !currentLesson) return;
+  const lesson = currentLesson, ex = currentExercise;
+  const spec = ex || lesson;
+  const code = editor ? editor.getValue() : '';
+  if (!code.trim()) return;
+  stashPyDraft();
+  clearPyErrorLine();
+  pyBusy = true;
+  updateRunButton();
+  try {
+    if (!PyRunner.ready() || (lesson.pkgs || []).length) {
+      if (!PyRunner.ready()) showFeedback('info', 'Starting Python…', 'The interpreter loads once per visit — a few seconds. After that, runs are instant.');
+      await ensurePython(lesson);
+    }
+    await new Promise(r => setTimeout(r, 0));          // let "Running…" paint
+    const t0 = performance.now();
+    const g = PyRunner.grade(code, spec, lesson);
+    const ms = performance.now() - t0;
+    if (currentLesson !== lesson || currentExercise !== ex) return;   // moved on while it ran
+    queriesRun++;
+    renderPyOutput(g, ms);
+    if (g.verdict === 'error') {
+      errorsMade++;
+      breakCombo();
+      playSound('error');
+      markPyErrorLine(g.error.line);
+      lastDiagnosis = `Python stopped with ${g.error.type}: ${g.error.msg}${g.error.line ? ` (line ${g.error.line})` : ''}`;
+    } else if (g.verdict === 'pass') {
+      lastDiagnosis = '';
+      if (ex) creditExercise(ex);
+      else if (!completedLessons.has(lesson.id)) completeLesson(lesson);
+      else prependOutput(`<div class="feedback-box feedback-success"><div class="feedback-label">✓ Passes</div>Still correct — this lesson is already complete.${getNextLesson() ? ' <a href="#" onclick="loadLesson(getNextLesson());return false" style="color:var(--accent)">Next lesson →</a>' : ''}</div>`);
+    } else {
+      lastDiagnosis = stripTags(g.why);
+      const ask = AI.ready() ? `<div class="explain-foot"><a href="#" onclick="askTutorWhy();return false">Ask the AI tutor</a></div>` : '';
+      prependOutput(`<div class="feedback-box feedback-info py-not-yet"><div class="feedback-label">It runs — not the answer yet</div>${formatPyMessage(g.why)}${ask}</div>`);
+    }
+    saveProgress();
+    checkAchievements();
+  } catch (e) {
+    showFeedback('error', 'Python could not run', escapeHtml(String(e && e.message || e)) + '<div class="py-error-tip">Reload the page and try again. If it keeps happening, your browser may be too old for the Python lessons — the SQL lessons are unaffected.</div>');
+  } finally {
+    pyBusy = false;
+    updateRunButton();
+  }
+}
+
+// A lesson's working-folder files, shown in the Schema tab.
+function showLessonFile(name) {
+  activeTab = 'schema';
+  document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.output-tab')[1].classList.add('active');
+  document.getElementById('row-count').style.display = 'none';
+  const box = document.getElementById('output-content');
+  const files = (currentLesson && currentLesson.files) || {};
+  if (name === 'shop.db') {
+    const tables = (currentLesson.tables && currentLesson.tables.length ? currentLesson.tables : Object.keys(schemas).filter(t => !t.startsWith('raw_')));
+    box.innerHTML = `<div class="feedback-box feedback-info"><div class="feedback-label">shop.db</div>A SQLite file holding the practice database from the SQL days. Open it with <code>sqlite3.connect("shop.db")</code>. Every run starts from a fresh copy, so nothing you write to it carries over.</div>
+      <div class="section-mini-title">Tables</div><div class="schema-pills" style="margin:6px 0 0">${tables.map(t => `<span class="schema-pill" onclick="showSchema('${t}')">${t}</span>`).join('')}</div>`;
+    return;
+  }
+  if (!name || files[name] === undefined) {
+    box.innerHTML = `<div class="feedback-box feedback-info"><div class="feedback-label">No tables or files</div>This lesson works on values written in the code itself.</div>`;
+    return;
+  }
+  const lines = files[name].replace(/\n$/, '').split('\n').length;
+  box.innerHTML = `<div class="schema-table-view"><div class="schema-table-name">${escapeHtml(name)}</div></div>
+    <div class="py-out-label">${lines} line${lines === 1 ? '' : 's'} · in the working folder · restored before every run</div>
+    <pre class="py-console file">${escapeHtml(files[name])}</pre>`;
 }
 
 // ── AI Tutor ──
@@ -2228,6 +2451,17 @@ function tutorSystemPrompt() {
     }
   }
   const sql = editor ? editor.getValue().trim() : '';
+  if (isPy(l)) {
+    const files = Object.keys(l.files || {});
+    let pctx = `\nCurrent lesson: "${l.title}" (${l.concept}). Task: ${stripTags(l.task)}`;
+    if (currentExercise) pctx += `\nThe learner is on this practice exercise: ${stripTags(currentExercise.prompt)}`;
+    if (files.length) pctx += `\nFiles in the working folder: ${files.join(', ')}`;
+    if (l.db) pctx += `\nThe working folder has shop.db, a SQLite copy of the course's practice database${(l.tables || []).length ? ` (tables used: ${l.tables.map(t => `${t}(${tableColumns(t).join(', ')})`).join('; ')})` : ''}.`;
+    if (sql) pctx += `\nTheir current code:\n${sql.slice(0, 2500)}`;
+    if (lastDiagnosis) pctx += `\nThe app's automatic check of their latest attempt says: ${lastDiagnosis.slice(0, 900)}`;
+    return `You are a friendly, concise Python tutor inside an interactive course that takes learners from SQL to data engineering. The learner already knows SQL well, so relate Python ideas to SQL where it helps. Code runs on Python 3.13 in the browser (standard library, sqlite3, pandas); there is no input() and no network.${pctx}
+Keep answers short (2-5 sentences). Use backticks for code. Explain the concept and give a nudge; do not write the full solution to the current task.`;
+  }
   if (sql) ctx += `\nTheir current query:\n${sql.slice(0, 1500)}`;
   if (lastDiagnosis) ctx += `\nThe app's automatic check of their latest attempt says: ${lastDiagnosis.slice(0, 900)}`;
   return `You are a friendly, concise SQL tutor inside an interactive SQL course that takes learners from beginner to data engineer. The practice database is SQLite.${ctx}
@@ -2243,7 +2477,7 @@ function askTutorWhy() {
   renderAITab();
   if (!AI.ready()) return;
   const input = document.getElementById('ai-input');
-  if (input) { input.value = "My query isn't passing — can you help me understand why, without giving me the answer?"; sendAI(); }
+  if (input) { input.value = `My ${isPy(currentLesson) ? 'code' : 'query'} isn't passing — can you help me understand why, without giving me the answer?`; sendAI(); }
 }
 
 async function sendAI() {

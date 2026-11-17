@@ -5,7 +5,7 @@
 // that carries a `_ref` query must pass its own `validate` rules.
 // Run with: node tools/verify.js
 const { loadCourse, initSql } = require('./load');
-const { curriculum, schemas, SqlEngine, DialectCheck, INTERVIEW_BANK } = loadCourse();
+const { sqlCurriculum: curriculum, schemas, SqlEngine, DialectCheck, INTERVIEW_BANK } = loadCourse();
 
 function freshDb(SQL) {
   const db = new SQL.Database();
