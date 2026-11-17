@@ -2054,3 +2054,36 @@ li.CodeMirror-hint-active { background: var(--accent-fill); color: var(--accent-
 .cm-s-default .cm-property { color: var(--code-var); }
 .cm-s-default .cm-string-2 { color: var(--code-str); }
 .cm-s-default .cm-atom { color: var(--code-num); }         /* True / False / None */
+
+
+/* ── Track switch (SQL / Python) ────────────────────────────────────────── */
+/* A two-option segmented control beside the logo. The selected track is the
+   raised segment; the mark in the logo changes with it. */
+.track-switch {
+  display: inline-flex; align-items: center; flex: none;
+  height: 34px; padding: 3px; gap: 2px;
+  background: var(--bg2); border-radius: 10px;
+}
+.track-opt {
+  height: 28px; padding: 0 13px;
+  border: none; border-radius: 8px; background: none;
+  color: var(--text3); cursor: pointer;
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+  transition: color 0.15s, background 0.15s;
+}
+.track-opt:hover { color: var(--text); }
+.track-opt.active { background: var(--bg0); color: var(--text); box-shadow: 0 0 0 1px var(--border2); }
+.track-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+body[data-track="python"] .logo-icon { background: var(--violet); color: #17102e; }
+/* Quiz and mock interviews grade SQL result sets; they belong to the SQL track. */
+body[data-track="python"] .quiz-btn,
+body[data-track="python"] .interview-btn { display: none; }
+.welcome-cta-alt {
+  margin-top: 8px; background: var(--bg2); color: var(--text);
+  border: 1px solid var(--border2);
+}
+.welcome-cta-alt:hover { background: var(--bg3); box-shadow: none; }
+@media (max-width: 760px) {
+  .track-opt { padding: 0 9px; }
+}
+.welcome-note { margin-top: 10px; text-align: center; font-size: 11.5px; color: var(--text3); }

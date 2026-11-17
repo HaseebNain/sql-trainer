@@ -87,11 +87,11 @@ const ACHIEVEMENTS = [
   { id:"join-master",   icon:"🔗", name:"JOIN Master",         desc:"Complete Day 4 and Day 11 — all things JOINs.",      when:() => dayComplete(4) && dayComplete(11) },
   { id:"window-wizard", icon:"🪟", name:"Window Wizard",       desc:"Complete Day 6 and Day 14 — window functions.",      when:() => dayComplete(6) && dayComplete(14) },
   { id:"ten-lessons",   icon:"📚", name:"Bookworm",            desc:"Complete 10 lessons.",                               when:() => completedLessons.size >= 10 },
-  { id:"halfway",       icon:"⛰️", name:"Halfway There",       desc:"Complete 50% of all lessons.",                       when:() => completedLessons.size >= Math.ceil(totalLessonCount() / 2) },
-  { id:"graduate",      icon:"🎓", name:"Graduate",            desc:"Complete every lesson in the course.",               when:() => completedLessons.size >= totalLessonCount() },
+  { id:"halfway",       icon:"⛰️", name:"Halfway There",       desc:"Complete 50% of the SQL track's lessons.",           when:() => { const p = trackLessonStats('sql'); return p.done >= Math.ceil(p.total / 2); } },
+  { id:"graduate",      icon:"🎓", name:"Graduate",            desc:"Complete every lesson in the SQL track.",            when:() => trackComplete('sql') },
   { id:"first-ex",      icon:"💪", name:"Extra Credit",        desc:"Complete your first practice exercise.",             when:() => completedExercises.size >= 1 },
   { id:"25-ex",         icon:"🏋️", name:"Practice Makes Perfect", desc:"Complete 25 practice exercises.",                 when:() => completedExercises.size >= 25 },
-  { id:"all-ex",        icon:"💯", name:"Completionist",       desc:"Complete every practice exercise in the course.",    when:() => completedExercises.size >= totalExerciseCount() },
+  { id:"all-ex",        icon:"💯", name:"Completionist",       desc:"Complete every practice exercise in the SQL track.", when:() => { const p = trackExerciseStats('sql'); return p.done >= p.total; } },
   { id:"combo-5",       icon:"🔥", name:"On Fire",             desc:"Reach a 5× solve combo — no hints, no errors.",      when:() => bestCombo >= 5 },
   { id:"combo-10",      icon:"⚡", name:"Unstoppable",         desc:"Reach a 10× solve combo.",                           when:() => bestCombo >= 10 },
   { id:"streak-3",      icon:"📅", name:"Habit Forming",       desc:"Keep a 3-day learning streak.",                      when:() => streak >= 3 },
@@ -111,7 +111,9 @@ const ACHIEVEMENTS = [
   { id:"mess-tamer",    icon:"🧽", name:"Mess Tamer",           desc:"Complete Days 32–34 — profile, stage and quarantine the raw plant data.", when:() => [32,33,34].every(dayComplete) },
   { id:"wh-builder",    icon:"🏭", name:"Warehouse Builder",    desc:"Complete Days 35–37 — dimensions, facts and the incremental load.", when:() => [35,36,37].every(dayComplete) },
   { id:"shipped",       icon:"🚢", name:"Shipped It",           desc:"Finish the capstone — the whole plant-floor warehouse (Days 32–39).", when:() => [32,33,34,35,36,37,38,39].every(dayComplete) },
-  { id:"py-hello",      icon:"🐍", name:"Hello, Python",        desc:"Complete your first Python lesson.",                  when:() => curriculum.some(d => d.lessons.some(l => isPy(l) && completedLessons.has(l.id))) },
+  { id:"py-hello",      icon:"🐍", name:"Hello, Python",        desc:"Complete your first Python lesson.",                  when:() => ALL_DAYS.some(d => d.lessons.some(l => isPy(l) && completedLessons.has(l.id))) },
+  { id:"py-scratch-half", icon:"🧱", name:"Thinking in Steps",   desc:"Python track: complete Days 1–4 — values, text, decisions and loops.", when:() => [101,102,103,104].every(dayComplete) },
+  { id:"py-scratch-done", icon:"🎒", name:"From Scratch",        desc:"Finish the whole Python track — from print() to a program that reads a file.", when:() => trackComplete('python') },
   { id:"pythonista",    icon:"🧪", name:"Pythonista",           desc:"Complete Days 40–43 — the Python language itself.",   when:() => [40,41,42,43].every(dayComplete) },
   { id:"file-wrangler", icon:"🗂️", name:"File Wrangler",        desc:"Complete Days 44–45 — errors, dates, CSV and JSON.",  when:() => [44,45].every(dayComplete) },
   { id:"py-pipeline",   icon:"🛠️", name:"Pipeline in Production", desc:"Complete Days 46–47 — Python driving SQL, and an idempotent pipeline end to end.", when:() => [46,47].every(dayComplete) },
@@ -137,14 +139,107 @@ const SKILL_TRACKS = [
   { name:"Warehouse Build (Capstone)", icon:"🏭", days:[32,33,34,35,36,37,38,39], blurb:"Raw → staging → dims & facts → marts on messy plant-floor data, with an incremental load and data tests. The actual job." },
   { name:"Python Fundamentals",     icon:"🐍", days:[40,41,42,43],  blurb:"Variables, control flow, lists / dicts / sets, functions and comprehensions — the Python every DE posting lists next to SQL." },
   { name:"Python for Data",         icon:"🗂️", days:[44,45],        blurb:"Exceptions and validation, dates, the standard library, CSV and JSON — reading the messy files pipelines start from." },
-  { name:"Python Pipelines & pandas", icon:"🛠️", days:[46,47,48],   blurb:"sqlite3 with parameters and transactions, generators, an idempotent extract-validate-load job, and pandas mapped onto SQL." }
+  { name:"Python Pipelines & pandas", icon:"🛠️", days:[46,47,48],   blurb:"sqlite3 with parameters and transactions, generators, an idempotent extract-validate-load job, and pandas mapped onto SQL." },
+  // The Python track (course-python-scratch.js). Only the active track's rows are shown.
+  { name:"Values & Text",           icon:"🔤", days:[101,102],      blurb:"Variables, numbers, types, f-strings, string methods and slicing — the vocabulary every program is written in." },
+  { name:"Logic & Loops",           icon:"🔁", days:[103,104],      blurb:"Comparisons, if / elif / else, for and while — how a program decides and repeats." },
+  { name:"Collections",             icon:"🧺", days:[105,106],      blurb:"Lists, dictionaries, sets and tuples, and the list-of-dictionaries shape that real data comes in." },
+  { name:"Functions & Programs",    icon:"🧩", days:[107,108],      blurb:"Writing your own functions, handling errors, importing modules, reading files — and a complete program at the end." }
 ];
 
+// ── Tracks ──
+// The app holds two courses and shows one at a time; the switch in the top bar
+// picks which. A day belongs to the SQL track unless it says `track: 'python'`
+// (course-python-scratch.js). `curriculum` always holds just the active
+// track's days — applyTrack() refills it in place — so the route, the course
+// map, Today, the daily challenge and the progress counts follow the switch
+// without knowing about it. XP, level, streak and achievements are shared.
+// ALL_DAYS is every day of both tracks, for the things that must not depend on
+// which track is showing (achievements, finding a saved lesson).
+const ALL_DAYS = curriculum.slice();
+const TRACK_KEY = 'sql_bootcamp_track';
+const TRACK_POS_KEY = 'sql_bootcamp_track_pos';
+const TRACKS = {
+  sql:    { label: 'SQL',    name: 'SQL Quest',    mark: 'SQL', sub: 'Zero to data engineer' },
+  python: { label: 'Python', name: 'Python Quest', mark: 'PY',  sub: 'Python from scratch' }
+};
+let activeTrack = 'sql';
+let trackPos = {};                 // track → id of the lesson last open on it
+function trackOf(day) { return (day && day.track) || 'sql'; }
+function trackDays(t) { return ALL_DAYS.filter(d => trackOf(d) === t); }
+// The day number the learner sees: Python-track days are numbered from 1.
+function dayNo(day) { return day.num || day.day; }
+function applyTrack() { curriculum.length = 0; curriculum.push(...trackDays(activeTrack)); }
+function trackComplete(t) { return trackDays(t).every(d => d.lessons.every(l => completedLessons.has(l.id))); }
+function trackLessonStats(t) {
+  const lessons = trackDays(t).flatMap(d => d.lessons);
+  return { done: lessons.filter(l => completedLessons.has(l.id)).length, total: lessons.length };
+}
+function trackExerciseStats(t) {
+  const exs = trackDays(t).flatMap(d => d.lessons).flatMap(l => l.exercises || []);
+  return { done: exs.filter(e => completedExercises.has(e.id)).length, total: exs.length };
+}
+
+// Counts for the active track (what the progress bars and "n of m" lines show).
 function totalLessonCount()  { return curriculum.reduce((n, d) => n + d.lessons.length, 0); }
 function totalExerciseCount(){ return curriculum.reduce((n, d) => n + d.lessons.reduce((m, l) => m + (l.exercises ? l.exercises.length : 0), 0), 0); }
+function doneLessonCount()   { return trackLessonStats(activeTrack).done; }
+function doneExerciseCount() { return trackExerciseStats(activeTrack).done; }
 function dayComplete(dayNum) {
-  const day = curriculum.find(d => d.day === dayNum);
+  const day = ALL_DAYS.find(d => d.day === dayNum);
   return !!day && day.lessons.every(l => completedLessons.has(l.id));
+}
+
+function loadTrackState(savedLessonId) {
+  try { trackPos = JSON.parse(localStorage.getItem(TRACK_POS_KEY) || '{}') || {}; } catch { trackPos = {}; }
+  let t = null;
+  try { t = localStorage.getItem(TRACK_KEY); } catch {}
+  if (!TRACKS[t]) {
+    // Saves from before tracks existed: stay on the track the open lesson is on.
+    const day = savedLessonId && ALL_DAYS.find(d => d.lessons.some(l => l.id === savedLessonId));
+    t = trackOf(day);
+  }
+  activeTrack = t;
+  applyTrack();
+}
+function saveTrackState() {
+  try {
+    localStorage.setItem(TRACK_KEY, activeTrack);
+    localStorage.setItem(TRACK_POS_KEY, JSON.stringify(trackPos));
+  } catch {}
+}
+// Where to land on the active track: the lesson last open there, else the
+// first unfinished one.
+function startLessonForTrack(fallbackId) {
+  const all = curriculum.flatMap(d => d.lessons);
+  return all.find(l => l.id === trackPos[activeTrack]) || (fallbackId && all.find(l => l.id === fallbackId)) ||
+    all.find(l => !completedLessons.has(l.id)) || all[0];
+}
+function updateTrackUI() {
+  const t = TRACKS[activeTrack];
+  document.body.dataset.track = activeTrack;
+  for (const id of Object.keys(TRACKS)) {
+    const btn = document.getElementById('track-' + id);
+    if (!btn) continue;
+    btn.classList.toggle('active', id === activeTrack);
+    btn.setAttribute('aria-pressed', id === activeTrack ? 'true' : 'false');
+  }
+  document.getElementById('logo-mark').textContent = t.mark;
+  document.getElementById('logo-name').textContent = t.name;
+  document.getElementById('logo-sub').textContent = t.sub;
+  document.title = activeTrack === 'python' ? 'Python Quest — Python from scratch' : 'SQL Quest — SQL & Python, Zero to Data Engineer';
+}
+function setTrack(t) {
+  if (!TRACKS[t] || t === activeTrack || pyBusy) return;
+  stashPyDraft();
+  activeTrack = t;
+  applyTrack();
+  updateTrackUI();
+  loadLesson(startLessonForTrack());   // also saves the track and the place on it
+  updateDailyBtn();
+  if (activeTrack === 'python' && trackLessonStats('python').done === 0) {
+    showToast('🐍', 'Python track', 'Python from scratch', 'No SQL or programming needed. Your SQL progress is kept — switch back any time.');
+  }
 }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
@@ -374,17 +469,24 @@ function trackProgress(track) {
 }
 function openCareerModal() {
   const total = totalLessonCount();
-  const readiness = Math.round((completedLessons.size / total) * 100);
+  const doneLessons = doneLessonCount();
+  const readiness = Math.round((doneLessons / total) * 100);
   const lvl = levelForXp(xp);
   const circumference = 2 * Math.PI * 34;
-  const verdict =
+  const pyTrack = activeTrack === 'python';
+  const dayLabels = t => t.days.map(n => { const d = ALL_DAYS.find(x => x.day === n); return d ? dayNo(d) : n; }).join(', ');
+  const verdict = pyTrack ? (
+    readiness >= 100 ? "<strong>You can program.</strong> Variables, decisions, loops, collections, functions and files are the whole foundation — everything else in Python is built from them. Switch to the SQL track next: its Days 40–48 show Python driving a database." :
+    readiness >= 60  ? "<strong>The hard part is behind you.</strong> You can already read most beginner Python. Functions and files turn what you know into real programs." :
+    readiness >= 25  ? "<strong>It's starting to click.</strong> Loops and lists are where programming begins to feel powerful — keep going." :
+                       "<strong>Early days.</strong> Everyone who writes code started with print(). A lesson a day is enough.") :
     readiness >= 100 ? "<strong>Interview-ready.</strong> You've covered everything a junior data engineer screen will throw at you — joins, windows, CTEs, and real analytics patterns. Start applying and rebuild these queries from memory as prep." :
     readiness >= 75  ? "<strong>Almost there.</strong> You can already pass most SQL screens. Close out the remaining analytics tracks — cohorts, funnels and KPIs are what separate you from other candidates." :
     readiness >= 40  ? "<strong>Solid foundation.</strong> Core querying is in place. Window functions and CTEs are the next big interview differentiators — keep pushing." :
                        "<strong>Early days.</strong> Every data engineer started exactly here. Consistency beats intensity — one day tab at a time, keep the streak alive.";
   const html = `
     <div class="modal-header">
-      <div class="modal-title">📈 Data Engineer Readiness</div>
+      <div class="modal-title">📈 ${pyTrack ? 'Python Readiness' : 'Data Engineer Readiness'}</div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="readiness-ring-wrap">
@@ -400,16 +502,16 @@ function openCareerModal() {
     </div>
     <div class="career-stats">
       <div class="cstat"><div class="cstat-num">Lv ${lvl + 1}</div><div class="cstat-label">${LEVELS[lvl].title}</div></div>
-      <div class="cstat"><div class="cstat-num">${completedLessons.size}/${total}</div><div class="cstat-label">Lessons</div></div>
-      <div class="cstat"><div class="cstat-num">${completedExercises.size}/${totalExerciseCount()}</div><div class="cstat-label">Exercises</div></div>
+      <div class="cstat"><div class="cstat-num">${doneLessons}/${total}</div><div class="cstat-label">Lessons</div></div>
+      <div class="cstat"><div class="cstat-num">${doneExerciseCount()}/${totalExerciseCount()}</div><div class="cstat-label">Exercises</div></div>
       <div class="cstat"><div class="cstat-num">${queriesRun.toLocaleString()}</div><div class="cstat-label">Queries run</div></div>
     </div>
-    ${SKILL_TRACKS.map(t => {
+    ${SKILL_TRACKS.filter(t => curriculum.some(d => t.days.includes(d.day))).map(t => {
       const p = trackProgress(t);
       return `<div class="skill-row">
         <div class="skill-row-top"><span class="skill-name">${t.icon} ${t.name}</span><span class="skill-pct">${p.done}/${p.total} · ${p.pct}%</span></div>
         <div class="skill-bar"><div class="skill-bar-fill${p.pct === 100 ? ' maxed' : ''}" style="width:${p.pct}%"></div></div>
-        <div class="skill-days">Days ${t.days.join(', ')} — ${t.blurb}</div>
+        <div class="skill-days">Days ${dayLabels(t)} — ${t.blurb}</div>
       </div>`;
     }).join('')}`;
   openModal(html);
@@ -559,11 +661,11 @@ function buildQuizPool() {
     for (const l of day.lessons) {
       if (isPy(l)) continue;           // the quiz checks SQL result sets
       if (completedLessons.has(l.id)) {
-        pool.push({ kind: 'lesson', lesson: l, day: day.day, prompt: l.task, tables: l.tables || [] });
+        pool.push({ kind: 'lesson', lesson: l, day: dayNo(day), prompt: l.task, tables: l.tables || [] });
       }
       for (const ex of (l.exercises || [])) {
         if (completedExercises.has(ex.id)) {
-          pool.push({ kind: 'exercise', lesson: l, ex, day: day.day, prompt: ex.prompt, tables: l.tables || [] });
+          pool.push({ kind: 'exercise', lesson: l, ex, day: dayNo(day), prompt: ex.prompt, tables: l.tables || [] });
         }
       }
     }
@@ -838,7 +940,7 @@ function loadProgress() {
 }
 
 function resetProgress() {
-  if (!confirm('Reset all progress? This cannot be undone.')) return;
+  if (!confirm('Reset all progress on both tracks (SQL and Python)? This cannot be undone.')) return;
   localStorage.removeItem(PROGRESS_KEY);
   completedLessons = new Set();
   completedExercises = new Set();
@@ -850,6 +952,7 @@ function resetProgress() {
   dailyDoneDates = [];
   activeDates = [];
   translationsDone = new Set();
+  trackPos = {};
   if (typeof Interview !== 'undefined') Interview.reset();
   updateXPDisplay();
   updateStreakDisplay();
@@ -1322,6 +1425,8 @@ async function initDB() {
   if (typeof PyRunner !== 'undefined') PyRunner.setDbProvider(shopDbBytes);
   window.addEventListener('beforeunload', stashPyDraft);
   const savedLessonId = loadProgress();
+  loadTrackState(savedLessonId);
+  updateTrackUI();
   initEditor();
   initResize();
   initVerticalResize();
@@ -1338,9 +1443,7 @@ async function initDB() {
   updateThemeButton();
   const verLabel = document.getElementById('ver-label');
   if (verLabel) verLabel.textContent = `v${APP_VERSION}`;
-  const allLessons = curriculum.flatMap(d => d.lessons);
-  const startLesson = (savedLessonId && allLessons.find(l => l.id === savedLessonId)) || allLessons[0];
-  loadLesson(startLesson);
+  loadLesson(startLessonForTrack(savedLessonId));
   if (!savedLessonId && completedLessons.size === 0) showWelcome();
   else if (localStorage.getItem('sql_bootcamp_today_seen') !== todayStr()) openToday();
   // Best-effort update check (offline-safe, non-blocking).
@@ -1359,7 +1462,7 @@ function updateDayNav() {
   const day = curriculum[currentDay];
   if (!day) return;
   const done = day.lessons.filter(l => completedLessons.has(l.id)).length;
-  document.getElementById('map-btn-label').textContent = `Day ${day.day} · ${day.title}`;
+  document.getElementById('map-btn-label').textContent = `Day ${dayNo(day)} · ${day.title}`;
   document.getElementById('map-btn-pct').textContent = `${done}/${day.lessons.length}`;
   document.getElementById('prev-day-btn').disabled = currentDay === 0;
   document.getElementById('next-day-btn').disabled = currentDay === curriculum.length - 1;
@@ -1382,7 +1485,7 @@ function jumpToDay(idx) {
   loadLesson(firstIncomplete || day.lessons[0]);
 }
 
-const COURSE_SECTIONS = [
+const TRACK_SECTIONS = { sql: [
   { label: 'Foundations', short: 'Foundations', from: 1, to: 7 },
   { label: 'Working with real data', short: 'Real data', from: 8, to: 16 },
   { label: 'Analytics engineering', short: 'Analytics', from: 17, to: 21 },
@@ -1390,11 +1493,17 @@ const COURSE_SECTIONS = [
   { label: 'Snowflake and BigQuery dialects', short: 'Dialects', from: 29, to: 31 },
   { label: 'Capstone: the plant-floor warehouse', short: 'Capstone', from: 32, to: 39 },
   { label: 'Python for data engineers', short: 'Python', from: 40, to: 99 }
-];
+], python: [
+  { label: 'First steps', short: 'First steps', from: 101, to: 102 },
+  { label: 'Decisions and loops', short: 'Logic & loops', from: 103, to: 104 },
+  { label: 'Collections', short: 'Collections', from: 105, to: 106 },
+  { label: 'Functions, files and a project', short: 'Programs', from: 107, to: 108 }
+] };
+function courseSections() { return TRACK_SECTIONS[activeTrack] || TRACK_SECTIONS.sql; }
 
 function openCourseMap() {
   let cards = '';
-  for (const section of COURSE_SECTIONS) {
+  for (const section of courseSections()) {
     const days = curriculum.filter(d => d.day >= section.from && d.day <= section.to);
     if (!days.length) continue;
     cards += `<div class="map-section-label">${section.label}</div>`;
@@ -1405,7 +1514,7 @@ function openCourseMap() {
       const complete = done === day.lessons.length;
       return `<div class="map-card${idx === currentDay ? ' current' : ''}${complete ? ' done' : ''}" onclick="jumpToDay(${idx})">
         <div class="map-card-top">
-          <span class="map-card-num">DAY ${day.day}</span>
+          <span class="map-card-num">DAY ${dayNo(day)}</span>
           ${complete ? '<span class="map-card-check">✓</span>' : ''}
         </div>
         <div class="map-card-title">${day.title}</div>
@@ -1416,10 +1525,10 @@ function openCourseMap() {
   const total = totalLessonCount();
   openModal(`
     <div class="modal-header">
-      <div class="modal-title">🗺️ Course Map</div>
+      <div class="modal-title">🗺️ Course Map — ${TRACKS[activeTrack].label} track</div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="modal-sub">${completedLessons.size} of ${total} lessons complete — click a day to jump in</div>
+    <div class="modal-sub">${doneLessonCount()} of ${total} lessons complete — click a day to jump in</div>
     <div class="map-grid">${cards}</div>`);
 }
 
@@ -1487,7 +1596,7 @@ function continueLesson(id) {
   if (editor) editor.focus();
 }
 function jumpToSection(i) {
-  const s = COURSE_SECTIONS[i];
+  const s = courseSections()[i];
   const days = curriculum.filter(d => d.day >= s.from && d.day <= s.to);
   const target = days.find(d => d.lessons.some(l => !completedLessons.has(l.id))) || days[0];
   if (target) jumpToDay(curriculum.indexOf(target));
@@ -1503,7 +1612,7 @@ function openToday() {
   const lamps = weekDates().map(d =>
     `<div class="lamp${activeDates.includes(d) ? ' on' : ''}${d === today ? ' today' : ''}"><div class="lamp-light"></div><div class="lamp-day">${d === today ? 'Today' : names[new Date(d + 'T00:00:00Z').getUTCDay()]}</div></div>`).join('');
 
-  const title = activeToday ? "You've put in work today." : shown ? `Day ${shown + 1} starts with one query.` : 'Pick up where you left off.';
+  const title = activeToday ? "You've put in work today." : shown ? `Day ${shown + 1} starts with one ${activeTrack === 'python' ? 'script' : 'query'}.` : 'Pick up where you left off.';
   const sub = activeToday ? 'Stopping here is fine. One more lesson is better.'
     : shown ? `Finish anything today to keep your ${shown}-day streak.`
     : 'Finish one lesson today and the first lamp goes on.';
@@ -1513,14 +1622,21 @@ function openToday() {
   if (next) {
     const day = curriculum.find(d => d.lessons.includes(next));
     nextCard = `<div class="today-card today-next">
-      <div class="today-card-kicker"><span>Next up — day ${day.day}, ${escapeHtml(day.title)}</span><span>${next.xp} XP</span></div>
+      <div class="today-card-kicker"><span>Next up — ${activeTrack === 'python' ? 'Python ' : ''}day ${dayNo(day)}, ${escapeHtml(day.title)}</span><span>${next.xp} XP</span></div>
       <div class="today-next-title">${next.title}</div>
       <div class="today-next-task">${stripTags(next.task)}</div>
-      <button class="btn btn-primary" onclick="continueLesson('${next.id}')">${completedLessons.size ? 'Continue' : 'Start'} this lesson</button>
+      <button class="btn btn-primary" onclick="continueLesson('${next.id}')">${doneLessonCount() ? 'Continue' : 'Start'} this lesson</button>
       <div class="today-day">
-        <span>Day ${day.day}: ${day.lessons.filter(l => completedLessons.has(l.id)).length} of ${day.lessons.length} lessons done</span>
+        <span>Day ${dayNo(day)}: ${day.lessons.filter(l => completedLessons.has(l.id)).length} of ${day.lessons.length} lessons done</span>
         <div class="today-day-dots">${day.lessons.map(l => `<i class="${completedLessons.has(l.id) ? 'done' : l === next ? 'cur' : ''}" title="${escapeHtml(l.title)}"></i>`).join('')}</div>
       </div>
+    </div>`;
+  } else if (activeTrack === 'python') {
+    nextCard = `<div class="today-card today-next">
+      <div class="today-card-kicker"><span>Python track complete</span><span>${totalLessonCount()} lessons</span></div>
+      <div class="today-next-title">You can program. Now point it at data.</div>
+      <div class="today-next-task">The SQL track teaches the language databases speak — and its Days 40–48 come back to Python to drive a database, build a pipeline and use pandas.</div>
+      <button class="btn btn-primary" onclick="closeModal(); setTrack('sql')">Switch to the SQL track</button>
     </div>`;
   } else {
     nextCard = `<div class="today-card today-next">
@@ -1549,14 +1665,14 @@ function openToday() {
     </div>`;
 
   const iv = typeof Interview !== 'undefined' ? Interview.stats() : { count: 0, best: 0 };
-  const interviewCard = `<div class="today-card">
+  const interviewCard = activeTrack === 'python' ? '' : `<div class="today-card">
       <div class="today-card-kicker"><span>Mock interview</span><span>${iv.count ? `best ${iv.best}/100` : 'not tried yet'}</span></div>
       <div class="today-card-text">${iv.count ? `${iv.count} done. Fifteen minutes is enough for two problems and their follow-ups.` : 'Two timed problems, follow-up questions and a scorecard in fifteen minutes.'}</div>
       <button class="btn btn-ghost" onclick="closeModal(); openInterview()">Start an interview</button>
     </div>`;
 
   const currentDayNum = curriculum[currentDay] ? curriculum[currentDay].day : 1;
-  const pipeline = COURSE_SECTIONS.map((s, i) => {
+  const pipeline = courseSections().map((s, i) => {
     const lessons = curriculum.filter(d => d.day >= s.from && d.day <= s.to).flatMap(d => d.lessons);
     if (!lessons.length) return '';
     const done = lessons.filter(l => completedLessons.has(l.id)).length;
@@ -1599,7 +1715,9 @@ function showWelcome() {
       <div class="welcome-feat"><span class="welcome-feat-icon">🔎</span><div><div class="welcome-feat-name">It tells you why</div><div class="welcome-feat-desc">A wrong answer gets a diagnosis — missing rows, a join fan-out, a rounding slip — not just a red X. No AI required.</div></div></div>
       <div class="welcome-feat"><span class="welcome-feat-icon">🎤</span><div><div class="welcome-feat-name">Mock interviews</div><div class="welcome-feat-desc">Timed problems with follow-ups and a scorecard — solo, or with an AI interviewer running on your own machine.</div></div></div>
     </div>
-    <button class="welcome-cta" onclick="closeModal()">Start day 1</button>`);
+    <button class="welcome-cta" onclick="closeModal()">Start SQL — day 1</button>
+    <button class="welcome-cta welcome-cta-alt" onclick="closeModal(); setTrack('python')">New to code? Start Python from scratch — ${trackDays('python').length} days, no SQL needed</button>
+    <div class="welcome-note">The SQL / Python switch in the top bar changes course any time. Each keeps its own place.</div>`);
 }
 
 // The sidebar is a route: days are stations on a line, grouped by stage.
@@ -1610,7 +1728,7 @@ function buildSidebar() {
   sb.innerHTML = '';
   let lastSection = null;
   curriculum.forEach((day, di) => {
-    const section = COURSE_SECTIONS.find(s => day.day >= s.from && day.day <= s.to) || null;
+    const section = courseSections().find(s => day.day >= s.from && day.day <= s.to) || null;
     const peers = section ? curriculum.filter(d => d.day >= section.from && d.day <= section.to) : [day];
     if (section && section !== lastSection) {
       lastSection = section;
@@ -1632,9 +1750,9 @@ function buildSidebar() {
 
     const header = document.createElement('div');
     header.className = 'day-group-header';
-    header.title = `Day ${day.day} — ${day.title}`;
+    header.title = `Day ${dayNo(day)} — ${day.title}`;
     header.innerHTML = `
-      <span class="rail-node${allDone ? ' done' : ''}${isOpen ? ' current' : ''}" style="--p:${Math.round(100 * doneCount / day.lessons.length)}">${allDone ? '✓' : day.day}</span>
+      <span class="rail-node${allDone ? ' done' : ''}${isOpen ? ' current' : ''}" style="--p:${Math.round(100 * doneCount / day.lessons.length)}">${allDone ? '✓' : dayNo(day)}</span>
       <span class="day-group-name">${day.title}</span>
       <span class="day-group-count">${allDone ? '' : `${doneCount}/${day.lessons.length}`}</span>`;
     header.onclick = () => group.classList.toggle('open');
@@ -1668,17 +1786,20 @@ function buildSidebar() {
 
 function updateSidebarProgress() {
   const total = totalLessonCount();
-  const pct = Math.round((completedLessons.size / total) * 100);
+  const done = doneLessonCount();
+  const pct = Math.round((done / total) * 100);
   const fill = document.getElementById('sidebar-progress-fill');
   const count = document.getElementById('sidebar-progress-count');
   if (fill) fill.style.width = pct + '%';
-  if (count) count.textContent = `${completedLessons.size} of ${total} lessons`;
+  if (count) count.textContent = `${done} of ${total} lessons`;
 }
 
 function loadLesson(lesson) {
   stashPyDraft();
   currentLesson = lesson;
   currentDay = curriculum.findIndex(d => d.lessons.includes(lesson));
+  trackPos[activeTrack] = lesson.id;
+  saveTrackState();
   updateDayNav();
   const py = isPy(lesson);
   setEditorLanguage(py);
@@ -1697,14 +1818,14 @@ function loadLesson(lesson) {
 
   const dayData = curriculum.find(d => d.lessons.includes(lesson));
   const total = curriculum.flatMap(d => d.lessons).length;
-  const pct = Math.round((completedLessons.size / total) * 100);
+  const pct = Math.round((doneLessonCount() / total) * 100);
 
   currentExercise = null;
   document.getElementById('exercise-bar').style.display = 'none';
 
   document.getElementById('lesson-panel').innerHTML = `
     <div class="lesson-meta">
-      <span class="lesson-meta-day">Day ${dayData.day}</span>
+      <span class="lesson-meta-day">Day ${dayNo(dayData)}</span>
       ${py ? '<span class="lang-tag">Python</span>' : ''}
       <span>${dayData.title}</span>
       <span>Lesson ${dayData.lessons.indexOf(lesson) + 1} of ${dayData.lessons.length}</span>
@@ -2459,7 +2580,10 @@ function tutorSystemPrompt() {
     if (l.db) pctx += `\nThe working folder has shop.db, a SQLite copy of the course's practice database${(l.tables || []).length ? ` (tables used: ${l.tables.map(t => `${t}(${tableColumns(t).join(', ')})`).join('; ')})` : ''}.`;
     if (sql) pctx += `\nTheir current code:\n${sql.slice(0, 2500)}`;
     if (lastDiagnosis) pctx += `\nThe app's automatic check of their latest attempt says: ${lastDiagnosis.slice(0, 900)}`;
-    return `You are a friendly, concise Python tutor inside an interactive course that takes learners from SQL to data engineering. The learner already knows SQL well, so relate Python ideas to SQL where it helps. Code runs on Python 3.13 in the browser (standard library, sqlite3, pandas); there is no input() and no network.${pctx}
+    const who = activeTrack === 'python'
+      ? 'You are a friendly, patient Python tutor inside an interactive course that teaches Python from scratch. The learner is a complete beginner: assume no programming and no SQL knowledge, use plain language, and only use ideas the course has reached by this lesson.'
+      : 'You are a friendly, concise Python tutor inside an interactive course that takes learners from SQL to data engineering. The learner already knows SQL well, so relate Python ideas to SQL where it helps.';
+    return `${who} Code runs on Python 3.13 in the browser (standard library, sqlite3, pandas); there is no input() and no network.${pctx}
 Keep answers short (2-5 sentences). Use backticks for code. Explain the concept and give a nudge; do not write the full solution to the current task.`;
   }
   if (sql) ctx += `\nTheir current query:\n${sql.slice(0, 1500)}`;

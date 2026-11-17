@@ -44,7 +44,7 @@ const Interview = (function () {
   const $ = id => document.getElementById(id);
   const fmtClock = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const plain = html => String(html).replace(/<[^>]+>/g, '');
-  function lessonById(id) { for (const d of curriculum) for (const l of d.lessons) if (l.id === id) return l; return null; }
+  function lessonById(id) { for (const d of (typeof ALL_DAYS !== 'undefined' ? ALL_DAYS : curriculum)) for (const l of d.lessons) if (l.id === id) return l; return null; }
   function setupFor(p) { const l = p.setupFrom ? lessonById(p.setupFrom) : null; return (l && l.setup) || null; }
   function pseudoLesson(p) {
     const l = { id: p.id, refs: p.refs, setup: setupFor(p) };

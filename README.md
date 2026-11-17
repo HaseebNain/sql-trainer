@@ -10,6 +10,19 @@ A gamified, fully interactive SQL **and Python** course that runs entirely in yo
 
 Progress, XP, streaks, and achievements persist in `localStorage`.
 
+## Two tracks: SQL and Python
+
+The **SQL / Python** switch next to the logo chooses which course you are in. Everything else — the route in the sidebar, the course map, Today, the daily challenge, the progress counts — follows it.
+
+| Track | What it is |
+|-------|------------|
+| **SQL** | The 48-day course described below. It ends with Python *for people who now know SQL* (Days 40–48). |
+| **Python** | **Python from scratch** — 8 days, 31 lessons, 30 practice exercises. It assumes no SQL and no programming: the first lesson is `print()`, the last is a program that reads a messy file and prints a report. |
+
+The Python track's days: first programs (print, variables, numbers, types) → text (f-strings, string methods, slicing) → decisions (`if` / `elif` / `else`, `and` / `or` / `not`) → loops (`for`, `while`, accumulators) → lists → dictionaries, sets and tuples → functions → errors, `import`, files and a final project.
+
+Each track remembers the lesson you left it on, so you can switch back and forth freely. XP, level, streak and achievements are shared between them; the quiz and the mock interviews grade SQL, so they appear on the SQL track only. Lessons on both tracks run on the same real interpreter and are graded the same way (see *How Python answers are validated*).
+
 ## The Course
 
 48 days, 177 lessons, 269 XP-earning practice exercises:
@@ -80,7 +93,7 @@ Written for someone who already knows SQL: every idea is introduced next to the 
 - **AI Tutor & interviewer — on a local model if you like** — optional, and not tied to a subscription. Point it at any OpenAI-compatible local server (**Ollama**, **LM Studio**, llama.cpp, Jan) for a free, offline tutor, or at the Anthropic API with your own key. The AI is never asked whether your SQL is correct; the engine decides that.
 - **Course Map** (`Ctrl+K`) — jump to any day; collapsible per-day sidebar with live progress.
 - **Light & dark themes**, keyboard shortcuts (`Ctrl+/` for the list), CSV export of any result set, per-query timing, and a **↺ Reset data** button that rebuilds the practice database after your DDL/DML experiments.
-- **Gamification** — XP with 18 levels (*Row Rookie* → *Two-Language Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 37 achievements 🏆.
+- **Gamification** — XP with 18 levels (*Row Rookie* → *Two-Language Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 39 achievements 🏆.
 - **Data Engineer Readiness report** 📈 — click your level badge for per-skill progress mapped to real job requirements.
 - **Update check** — the version badge in the top bar checks GitHub for a newer release and, when you're online, tells you how to update (`git pull` or re-download). It's best-effort and fails silently offline; your saved XP/progress survive updates.
 
@@ -104,6 +117,7 @@ A page opened in a browser needs the server's permission to call it (CORS). If t
 | `course-python-basics.js` | Days 40–42 (and the lesson-format notes for the whole Python track) |
 | `course-python-data.js` | Days 43–45 — functions, errors, files |
 | `course-python-pipelines.js` | Days 46–48 — sqlite3, the pipeline capstone, pandas |
+| `course-python-scratch.js` | The Python track — Python from scratch, Python Days 1–8 (`track: 'python'`) |
 | `python.js` | Python runtime and grader — starts Pyodide, runs code in a clean namespace and folder, checks output and behaviour |
 | `refs.js` | Authored reference answers for Days 1–28 |
 | `engine.js` | Result-set validator — grades a query by the *results* it produces |
@@ -196,6 +210,9 @@ Add lessons in the `curriculum` array in `data.js`, or — for anything new — 
 `LEVELS` / `ACHIEVEMENTS` / `SKILL_TRACKS` in `app.js`. Give each new exercise a
 `_ref` field with a reference solution. A new content file must be added to the
 `<script>` tags in `index.html` **and** to `CONTENT_FILES` in `tools/load.js`.
+A day belongs to the SQL track unless it sets `track: 'python'`; Python-track days
+also set `num` (the day number shown) and use a `day` of 101+ as a unique key —
+see `course-python-scratch.js` and the "Tracks" section of `app.js`.
 Then run:
 
 ```
