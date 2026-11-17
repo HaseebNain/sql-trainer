@@ -155,8 +155,8 @@ def _run_tests(tests, ns, out, src):
             hint = ''
             if isinstance(got, str) and not isinstance(want, str):
                 hint = ' Yours is text - convert it to a number.'
-            elif got is None:
-                hint = ' None usually means a function is missing its return.'
+            elif got is None and '(' in what:
+                hint = ' None usually means the function is missing a return.'
             raise CheckFail(f"{what} should be {_code(_short(want))} - yours is {_code(_short(got))}.{hint}")
 
     _missing = object()

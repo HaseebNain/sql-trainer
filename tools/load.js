@@ -23,7 +23,10 @@ function loadCourse() {
   const SqlExplain = opt('explain.js', 'SqlExplain', { SqlEngine, schemas });
   const DialectCheck = opt('dialect.js', 'DialectCheck', {});
   const INTERVIEW_BANK = opt('interview-bank.js', 'INTERVIEW_BANK', {}) || [];
-  return { ROOT, read, curriculum, schemas, LESSON_REFS, SqlEngine, SqlExplain, DialectCheck, INTERVIEW_BANK };
+  // The SQL tools grade with engine.js; Python days (lang: 'python') are graded
+  // by python.js and have their own gate, tools/verify-python.js.
+  const sqlCurriculum = curriculum.filter(d => !d.lessons.some(l => l.lang === 'python'));
+  return { ROOT, read, curriculum, sqlCurriculum, schemas, LESSON_REFS, SqlEngine, SqlExplain, DialectCheck, INTERVIEW_BANK };
 }
 
 async function initSql() {

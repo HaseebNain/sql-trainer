@@ -5,7 +5,7 @@
 // reference (i.e. still depend on the legacy text matcher).
 // Run with: node tools/verify-refs.js  [--all]
 const { loadCourse, initSql } = require('./load');
-const { curriculum, LESSON_REFS, SqlEngine } = loadCourse();
+const { sqlCurriculum: curriculum, LESSON_REFS, SqlEngine } = loadCourse();
 
 const showAll = process.argv.includes('--all');
 
