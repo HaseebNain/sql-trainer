@@ -55,6 +55,18 @@ const { initPython } = require('./py-load.js');
       checkSpec(ex, l, 'exercise');
     }
   }
-  console.log(`Python track: ${nLessons} lessons, ${nEx} exercises on Pyodide ${Py.version()}: ${errors} errors`);
+  // Python mock-interview problems are graded the same way as a lesson.
+  let nIv = 0;
+  const dayKeys = new Set(course.curriculum.map(d => d.day));
+  for (const p of (only ? [] : course.PY_INTERVIEW_BANK)) {
+    nIv++;
+    for (const f of ['title', 'prompt', 'hint', 'starter', 'track']) if (!p[f]) bad(p.id, `missing ${f}`);
+    if (![1, 2, 3].includes(p.level)) bad(p.id, 'level must be 1, 2 or 3');
+    if (!(p.minutes > 0)) bad(p.id, 'missing minutes');
+    if (!Array.isArray(p.followups) || p.followups.length < 2 || p.followups.some(f => !f.q || !f.a)) bad(p.id, 'needs at least two follow-ups with q and a');
+    for (const d of p.review || []) if (!dayKeys.has(d)) bad(p.id, `review day ${d} does not exist`);
+    checkSpec(p, p, 'interview');
+  }
+  console.log(`Python track: ${nLessons} lessons, ${nEx} exercises, ${nIv} interview problems on Pyodide ${Py.version()}: ${errors} errors`);
   process.exit(errors ? 1 : 0);
 })().catch(e => { console.error('verify-python failed:', String(e && e.message).slice(0, 800)); process.exit(1); });
