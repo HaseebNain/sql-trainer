@@ -14,6 +14,11 @@
 // and failed submissions are diagnosed by explain.js — the AI is never asked
 // whether a query is right. The score is computed here, deterministically.
 //
+// On the Python track the room is the same but the problems come from
+// interview-bank-python.js: the editor holds Python, Run shows what the code
+// prints, and python.js grades a submission by calling the candidate's
+// function with its own inputs (`S.py` marks such a session).
+//
 // Loaded after app.js; uses its helpers (openModal, escapeHtml, showToast, …).
 
 const Interview = (function () {
@@ -21,8 +26,15 @@ const Interview = (function () {
   const TRACKS = {
     sql:   { name: 'SQL screen',        desc: 'Joins, windows, aggregation — the classic 45-minute screen.' },
     de:    { name: 'Data engineering',  desc: 'Dedup, SCD2, gaps & islands, units — on the plant-floor warehouse.' },
-    mixed: { name: 'Mixed',             desc: 'A bit of both, the way most onsite loops run.' }
+    mixed: { name: 'Mixed',             desc: 'A bit of both, the way most onsite loops run.' },
+    py:      { py: true, name: 'Python fundamentals', desc: 'Strings, loops and logic — FizzBuzz to two-sum.' },
+    pydata:  { py: true, name: 'Working with data',   desc: 'Lists, dictionaries, records and files — counting, grouping, cleaning.' },
+    pymixed: { py: true, name: 'Mixed',               desc: 'Some of each, easiest first.' }
   };
+  // Which focus options the setup dialog offers, and which two bank tracks
+  // "Mixed" interleaves, depends on the course track that is showing.
+  const pyMode = () => typeof activeTrack !== 'undefined' && activeTrack === 'python' && typeof PY_INTERVIEW_BANK !== 'undefined';
+  const MIXED = { mixed: ['sql', 'de'], pymixed: ['py', 'pydata'] };
   const LENGTHS = [{ min: 15, n: 2 }, { min: 30, n: 3 }, { min: 45, n: 4 }];
 
   let S = null;            // the live session
@@ -64,6 +76,7 @@ const Interview = (function () {
   function open() {
     if (S) { showRoom(); return; }
     pick.mode = AI.ready() ? 'ai' : 'solo';
+    if (!!TRACKS[pick.track].py !== pyMode()) pick.track = pyMode() ? 'py' : 'sql';
     renderSetup();
   }
   function choose(key, value) { pick[key] = value; renderSetup(); }
@@ -82,9 +95,9 @@ const Interview = (function () {
         <span class="iv-history-score">${x.score}<small>/100</small></span></div>`).join('')}</div>` : '';
     openModal(`
       <div class="modal-header"><div class="modal-title">🎤 Mock Interview</div><button class="modal-close" onclick="closeModal()">✕</button></div>
-      <div class="modal-sub">A timed SQL interview with follow-up questions and a scorecard. Answers are graded by the same engine as the lessons.</div>
+      <div class="modal-sub">A timed ${pyMode() ? 'Python' : 'SQL'} interview with follow-up questions and a scorecard. Answers are graded by the same engine as the lessons.</div>
       <div class="section-mini-title">Focus</div>
-      <div class="iv-opts">${Object.keys(TRACKS).map(k => opt('track', k, TRACKS[k].name, TRACKS[k].desc)).join('')}</div>
+      <div class="iv-opts">${Object.keys(TRACKS).filter(k => !!TRACKS[k].py === pyMode()).map(k => opt('track', k, TRACKS[k].name, TRACKS[k].desc)).join('')}</div>
       <div class="section-mini-title" style="margin-top:14px">Length</div>
       <div class="iv-opts three">${LENGTHS.map(l => opt('min', l.min, `${l.min} min`, `${l.n} problems`)).join('')}</div>
       <div class="section-mini-title" style="margin-top:14px">Interviewer</div>
@@ -100,14 +113,24 @@ const Interview = (function () {
   }
 
   // ── Session ──
-  function start() {
+  async function start() {
+    const py = !!TRACKS[pick.track].py;
+    if (py && !PyRunner.ready()) {
+      // The interpreter has to be up before the clock starts.
+      const btn = document.querySelector('.modal .btn-primary');
+      if (btn) { btn.disabled = true; btn.textContent = 'Starting Python…'; }
+      try { await ensurePython({}); }
+      catch (e) { showToast('🐍', 'Interview', 'Python could not start', String(e && e.message || e)); renderSetup(); return; }
+      if (S) return;
+    }
     closeModal();
     const len = LENGTHS.find(l => l.min === pick.min) || LENGTHS[1];
-    const pool = INTERVIEW_BANK.filter(p => pick.track === 'mixed' || p.track === pick.track);
+    const mix = MIXED[pick.track];
+    const pool = (py ? PY_INTERVIEW_BANK : INTERVIEW_BANK).filter(p => mix ? mix.includes(p.track) : p.track === pick.track);
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
     let chosen;
-    if (pick.track === 'mixed') {
-      const a = pool.filter(p => p.track === 'sql'), b = pool.filter(p => p.track === 'de');
+    if (mix) {
+      const a = pool.filter(p => p.track === mix[0]), b = pool.filter(p => p.track === mix[1]);
       chosen = [];
       while (chosen.length < len.n && (a.length || b.length)) {
         if (a.length) chosen.push(a.shift());
@@ -119,17 +142,17 @@ const Interview = (function () {
     chosen.sort((x, y) => x.level - y.level);           // warm up first, hardest last
     const now = Date.now();
     S = {
-      track: pick.track, mode: pick.mode, minutes: len.min,
+      track: pick.track, mode: pick.mode, minutes: len.min, py,
       startedAt: now, endsAt: now + len.min * 60000, idx: 0, busy: false, over: false,
       items: chosen.map(p => ({
-        p, lesson: pseudoLesson(p), phase: 'pending', startedAt: null, solvedMs: null,
-        attempts: 0, hintUsed: false, skipped: false, lastSql: '',
+        p, lesson: py ? p : pseudoLesson(p), phase: 'pending', startedAt: null, solvedMs: null,
+        attempts: 0, hintUsed: false, skipped: false, lastSql: py ? p.starter : '',
         follow: p.followups.map(f => ({ q: f.q, a: f.a, answer: null, score: null })), fIdx: 0
       })),
       chat: [], ai: []
     };
     showRoom();
-    say('interviewer', `Hi — I'm your interviewer for the next <strong>${len.min} minutes</strong>. We'll work through ${chosen.length} problems, easiest first. Run queries as often as you like and press <strong>Submit answer</strong> when you're happy. After each one I'll ask a couple of follow-ups${S.mode === 'ai' ? ' — and you can ask me clarifying questions any time' : ''}. Ready?`);
+    say('interviewer', `Hi — I'm your interviewer for the next <strong>${len.min} minutes</strong>. We'll work through ${chosen.length} problems, easiest first. Run ${py ? 'your code' : 'queries'} as often as you like and press <strong>Submit answer</strong> when you're happy. After each one I'll ask a couple of follow-ups${S.mode === 'ai' ? ' — and you can ask me clarifying questions any time' : ''}. Ready?`);
     beginProblem();
     ticker = setInterval(tick, 1000);
   }
@@ -214,6 +237,10 @@ const Interview = (function () {
     const solving = it.phase === 'solve';
     const tables = (p.tables || []).concat(p.models || []);
     const prevSql = cm ? cm.getValue() : it.lastSql;
+    // Python problems have working-folder files where SQL ones have tables.
+    const context = S.py
+      ? Object.keys(p.files || {}).map(n => `<details class="iv-file"><summary><span class="quiz-schema-name">${escapeHtml(n)}</span> <span class="iv-muted">in the working folder — click to view</span></summary><pre class="py-console file">${escapeHtml(p.files[n])}</pre></details>`).join('')
+      : tables.map(t => `<div class="quiz-schema-row"><span class="quiz-schema-name">${t}</span><span class="quiz-schema-cols">${columnsOf(p, t).map(c => `<span class="quiz-col">${c}</span>`).join('')}</span></div>`).join('');
     work.innerHTML = `
       <div class="iv-problem">
         <div class="iv-problem-head">
@@ -222,9 +249,9 @@ const Interview = (function () {
           <span class="iv-target">target ${p.minutes} min</span>
         </div>
         <div class="iv-problem-text">${p.prompt}</div>
-        <div class="quiz-schema">${tables.map(t => `<div class="quiz-schema-row"><span class="quiz-schema-name">${t}</span><span class="quiz-schema-cols">${columnsOf(p, t).map(c => `<span class="quiz-col">${c}</span>`).join('')}</span></div>`).join('')}</div>
+        ${context ? `<div class="quiz-schema">${context}</div>` : ''}
       </div>
-      <div class="iv-editor" id="iv-editor"></div>
+      <div class="iv-editor${S.py ? ' py' : ''}" id="iv-editor"></div>
       <div class="iv-actions">
         <button class="btn btn-ghost" onclick="Interview.run()" title="Ctrl/Cmd + Enter">▶ Run</button>
         <button class="btn btn-primary" id="iv-submit" onclick="Interview.submit()" ${solving ? '' : 'disabled'}>Submit answer</button>
@@ -232,10 +259,14 @@ const Interview = (function () {
         <span style="flex:1"></span>
         <button class="btn btn-ghost" id="iv-next" onclick="Interview.next()">${S.idx + 1 < S.items.length ? (solving ? 'Skip problem →' : 'Next problem →') : (solving ? 'Skip & finish →' : 'Finish →')}</button>
       </div>
-      <div class="iv-results" id="iv-results"><div class="empty-state"><div>Run a query to see its result here.</div><div style="margin-top:4px"><span class="kbd">Ctrl</span> <span class="kbd">Enter</span></div></div></div>`;
+      <div class="iv-results" id="iv-results"><div class="empty-state"><div>${S.py ? 'Run your code to see what it prints here.' : 'Run a query to see its result here.'}</div><div style="margin-top:4px"><span class="kbd">Ctrl</span> <span class="kbd">Enter</span></div></div></div>`;
     cm = CodeMirror($('iv-editor'), {
-      mode: 'text/x-sql', lineNumbers: true, tabSize: 2, indentWithTabs: false, value: prevSql || '',
-      extraKeys: { 'Ctrl-Enter': run, 'Cmd-Enter': run }
+      mode: S.py ? 'python' : 'text/x-sql', lineNumbers: true, tabSize: S.py ? 4 : 2, indentUnit: S.py ? 4 : 2, indentWithTabs: false, value: prevSql || '',
+      extraKeys: {
+        'Ctrl-Enter': run, 'Cmd-Enter': run,
+        'Tab': c => c.somethingSelected() ? c.execCommand('indentMore') : c.execCommand('insertSoftTab'),
+        'Shift-Tab': c => c.execCommand('indentLess')
+      }
     });
     setTimeout(() => { if (cm) { cm.refresh(); if (solving) cm.focus(); } }, 30);
     const input = $('iv-say');
@@ -268,15 +299,32 @@ const Interview = (function () {
   function run() {
     if (!S || !cm) return null;
     const it = cur();
-    const sql = cm.getValue().trim();
-    if (!sql) return null;
+    const sql = S.py ? cm.getValue().replace(/\s+$/, '') : cm.getValue().trim();
+    if (!sql.trim()) return null;
     it.lastSql = sql;
-    const out = SqlEngine.runDetailed([it.lesson.setup, sql]);
     const box = $('iv-results');
+    if (S.py) return runPy(it, sql, box);
+    const out = SqlEngine.runDetailed([it.lesson.setup, sql]);
     if (out.error) box.innerHTML = `<div class="feedback-box feedback-error"><div class="feedback-label">SQL error</div>${escapeHtml(out.error)}</div>`;
     else if (!out.result) box.innerHTML = `<div class="feedback-box feedback-info"><div class="feedback-label">Statement executed</div>No rows returned.</div>`;
     else box.innerHTML = resultTable(out.result);
     return out;
+  }
+
+  // Python: a clean namespace and working folder every time, like the lessons.
+  function pyConsole(r) {
+    const e = r.error;
+    const err = e ? `<div class="feedback-box feedback-error"><div class="feedback-label">${escapeHtml(e.type)}${e.line ? ` on line ${e.line}` : ''}</div><div class="py-error-msg">${escapeHtml(e.msg)}</div>${e.tip ? `<div class="py-error-tip">${escapeHtml(e.tip)}</div>` : ''}</div>` : '';
+    const out = r.out ? `<pre class="py-console">${escapeHtml(r.out)}</pre>`
+      : `<div class="py-console empty">${e ? 'Nothing was printed before the error.' : 'Nothing was printed. Use print(...) to see a value.'}</div>`;
+    return `${err}<div class="py-out-label">Output</div>${out}`;
+  }
+  function runPy(it, code, box) {
+    let r;
+    try { r = PyRunner.run(code, it.p, { spec: it.p }); }
+    catch (e) { r = { out: '', error: { type: 'Python could not run', msg: String(e && e.message || e) } }; }
+    if (box) box.innerHTML = pyConsole(r);
+    return { py: r, error: r.error ? `${r.error.type}: ${r.error.msg}${r.error.line ? ` (line ${r.error.line})` : ''}` : null };
   }
 
   async function submit() {
@@ -288,8 +336,18 @@ const Interview = (function () {
     const sql = it.lastSql;
     it.attempts++;
     say('you', `<span class="iv-tag">Submitted · attempt ${it.attempts}</span><pre class="iv-code">${escapeHtml(sql)}</pre>`);
-    let verdict = 'fail', diag = null;
-    try { verdict = SqlEngine.evaluate(sql, it.lesson); } catch { verdict = 'fail'; }
+    let verdict = 'fail', diag = null, pyWhy = '';
+    if (S.py) {
+      try {
+        const g = PyRunner.grade(sql, it.p, it.p);
+        verdict = g.verdict === 'pass' ? 'pass' : 'fail';
+        pyWhy = g.verdict === 'fail' ? g.why : '';
+        if (g.error && !out.error) out.error = `${g.error.type}: ${g.error.msg}`;   // it only failed under the checks' inputs
+      } catch { verdict = 'fail'; }
+    } else {
+      try { verdict = SqlEngine.evaluate(sql, it.lesson); } catch { verdict = 'fail'; }
+    }
+    const what = S.py ? 'code' : 'SQL', thing = S.py ? 'code' : 'query';
     if (verdict === 'pass') {
       it.solvedMs = Date.now() - it.startedAt;
       it.phase = 'follow';
@@ -297,20 +355,22 @@ const Interview = (function () {
       renderWork();
       const f = it.follow[0];
       await interviewer(
-        `[APP] The candidate's submission is CORRECT (attempt ${it.attempts}, ${fmtClock(it.solvedMs)}). Their SQL:\n${sql}\nAcknowledge it in one sentence — mention one specific thing about their query if it is notable — then ask this follow-up question in your own words: "${f.q}"`,
+        `[APP] The candidate's submission is CORRECT (attempt ${it.attempts}, ${fmtClock(it.solvedMs)}). Their ${what}:\n${sql}\nAcknowledge it in one sentence — mention one specific thing about their ${thing} if it is notable — then ask this follow-up question in your own words: "${f.q}"`,
         `Correct — solved in <strong>${fmtClock(it.solvedMs)}</strong>${it.attempts > 1 ? `, on attempt ${it.attempts}` : ', first try'}.<br><br><span class="iv-tag">Follow-up</span>${escapeHtml(f.q)}`);
       return;
     }
     playSound('error');
-    try { diag = out.error ? null : SqlExplain.diagnose(sql, it.lesson); } catch { diag = null; }
-    const summary = out.error ? `The query fails with: ${out.error}` : diag && diag.verdict === 'fail' ? SqlExplain.summarize(diag) : 'The result does not match the expected answer.';
+    try { diag = out.error || S.py ? null : SqlExplain.diagnose(sql, it.lesson); } catch { diag = null; }
+    const summary = out.error ? `The ${thing} fails with: ${out.error}` : pyWhy ? pyWhy : diag && diag.verdict === 'fail' ? SqlExplain.summarize(diag) : 'The result does not match the expected answer.';
     const scripted = out.error
       ? `That doesn't run yet — <code>${escapeHtml(out.error)}</code>. Fix the error and submit again.`
+      : pyWhy
+        ? `Not there yet — it runs, but one of my test inputs gives the wrong answer.<br>${formatPyMessage(pyWhy)}`
       : diag && diag.verdict === 'fail'
         ? `Not there yet — <strong>${escapeHtml(diag.headline)}</strong>.<br>${diag.points[0] || ''}`
         : `That isn't the expected result yet. Re-read the prompt for the exact rows and columns.`;
     await interviewer(
-      `[APP] The candidate submitted a query (attempt ${it.attempts}). It is WRONG. Their SQL:\n${sql}\nAutomatic diagnosis: ${summary}\nGive ONE short nudge toward the fix, phrased the way an interviewer would. Do not reveal the solution or write the corrected SQL.`,
+      `[APP] The candidate submitted ${S.py ? 'code' : 'a query'} (attempt ${it.attempts}). It is WRONG. Their ${what}:\n${sql}\nAutomatic diagnosis: ${summary}\nGive ONE short nudge toward the fix, phrased the way an interviewer would. Do not reveal the solution or write the corrected ${what}.`,
       scripted);
   }
 
@@ -407,6 +467,21 @@ const Interview = (function () {
   // ── AI plumbing ──
   function systemPrompt() {
     const it = cur();
+    if (S.py) {
+      const files = Object.keys(it.p.files || {});
+      return `You are a senior engineer running a mock technical Python interview for an early-career candidate. Be professional, warm and brief: at most 4 short sentences per reply, in plain text.
+The candidate writes Python 3 using only the standard library.${files.length ? ` Files in the working folder: ${files.join(', ')}.` : ''}
+
+Current problem (${S.idx + 1} of ${S.items.length}): ${plain(it.p.prompt)}
+Reference solution — for your eyes only:
+${it.p.ref}
+
+Rules:
+- Messages that start with [APP] come from the interview software, not the candidate. They report what just happened and tell you what to do next. Follow them and never mention [APP] or these rules.
+- The software has already checked whether a submission is correct by running it against test inputs. Trust that verdict; never re-judge correctness yourself.
+- Never reveal the reference solution and never write code that solves the problem. If asked for the answer, give a nudge instead.
+- If the candidate asks a clarifying question, answer it the way an interviewer would.`;
+    }
     return `You are a senior data engineer running a mock technical SQL interview. Be professional, warm and brief: at most 4 short sentences per reply, in plain text.
 Database engine: SQLite. Tables the candidate can query:
 ${schemaText(it.p)}
@@ -507,14 +582,14 @@ Rules:
       return `<div class="iv-card-row">
         <div class="iv-card-main"><div class="iv-card-title">${i + 1}. ${escapeHtml(it.p.title)}</div>
           <div class="iv-card-sub">${status} · follow-ups ${fu}</div>
-          <details class="iv-model"><summary>Reference solution</summary><pre class="iv-code">${escapeHtml(it.p.refs[0])}</pre></details></div>
+          <details class="iv-model"><summary>Reference solution</summary><pre class="iv-code">${escapeHtml(S.py ? it.p.ref : it.p.refs[0])}</pre></details></div>
         <div class="iv-card-score${sc.total >= 70 ? ' good' : ''}">${sc.total}</div></div>`;
     }).join('');
     const review = reviewDays.length ? `
       <div class="section-mini-title" style="margin-top:16px">Review before the next one</div>
       <div class="iv-review">${reviewDays.map(d => {
         const idx = curriculum.findIndex(x => x.day === d);
-        return idx < 0 ? '' : `<button class="schema-pill" onclick="Interview.reviewDay(${idx})">Day ${d} · ${escapeHtml(curriculum[idx].title)}</button>`;
+        return idx < 0 ? '' : `<button class="schema-pill" onclick="Interview.reviewDay(${idx})">Day ${dayNo(curriculum[idx])} · ${escapeHtml(curriculum[idx].title)}</button>`;
       }).join('')}</div>` : '';
 
     const el = ensureOverlay();
@@ -550,11 +625,11 @@ Rules:
     box.innerHTML = `<div class="feedback-box feedback-info"><div class="feedback-label">Interviewer's notes</div><span class="iv-muted">Writing feedback…</span></div>`;
     const summary = S.items.map((it, i) => {
       const f = it.follow.map(x => `Q: ${x.q}\n   Candidate: ${x.answer === null ? '(not reached)' : x.answer}\n   Rated ${x.score === null ? 'n/a' : x.score + '/2'}`).join('\n   ');
-      return `${i + 1}. ${it.p.title} — ${it.solvedMs !== null ? `solved in ${fmtClock(it.solvedMs)} (target ${it.p.minutes} min), ${it.attempts} attempt(s)${it.hintUsed ? ', used a hint' : ''}` : 'not solved'}; score ${parts[i].total}/100.\n   Final SQL: ${it.lastSql || '(none)'}\n   ${f}`;
+      return `${i + 1}. ${it.p.title} — ${it.solvedMs !== null ? `solved in ${fmtClock(it.solvedMs)} (target ${it.p.minutes} min), ${it.attempts} attempt(s)${it.hintUsed ? ', used a hint' : ''}` : 'not solved'}; score ${parts[i].total}/100.\n   Final ${S.py ? 'code' : 'SQL'}: ${it.lastSql || '(none)'}\n   ${f}`;
     }).join('\n');
     try {
       const text = await AI.chat({
-        system: 'You are a senior data engineer writing brief, specific, kind feedback after a mock SQL interview. Plain text only.',
+        system: `You are a senior ${S.py ? '' : 'data '}engineer writing brief, specific, kind feedback after a mock ${S.py ? 'Python' : 'SQL'} interview. Plain text only.`,
         messages: [{ role: 'user', content: `Overall score ${score}/100.\n\n${summary}\n\nWrite: two strengths, two things to work on, and one concrete practice suggestion. Be specific to what the candidate actually wrote. At most 120 words, short lines.` }],
         maxTokens: 350
       });

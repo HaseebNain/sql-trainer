@@ -13,8 +13,10 @@ const CONTENT_FILES = ['data.js', 'data-warehouse.js', 'course-dialects.js', 'co
   'course-python-scratch.js'];
 
 function loadCourse() {
-  const src = CONTENT_FILES.filter(f => fs.existsSync(path.join(ROOT, f))).map(read).join('\n;\n');
-  const { curriculum, schemas } = new Function(src + ';\nreturn { curriculum, schemas };')();
+  // interview-bank-python.js rides along: it is written with PyCourse.py.
+  const src = CONTENT_FILES.concat('interview-bank-python.js').filter(f => fs.existsSync(path.join(ROOT, f))).map(read).join('\n;\n');
+  const { curriculum, schemas, PY_INTERVIEW_BANK } = new Function(src +
+    ';\nreturn { curriculum, schemas, PY_INTERVIEW_BANK: typeof PY_INTERVIEW_BANK === "undefined" ? [] : PY_INTERVIEW_BANK };')();
   const LESSON_REFS = new Function(read('refs.js') + ';\nreturn LESSON_REFS;')();
   const SqlEngine = new Function('schemas', 'LESSON_REFS', 'module',
     read('engine.js') + ';\nreturn SqlEngine;')(schemas, LESSON_REFS, {});
@@ -27,7 +29,7 @@ function loadCourse() {
   // The SQL tools grade with engine.js; Python days (lang: 'python') are graded
   // by python.js and have their own gate, tools/verify-python.js.
   const sqlCurriculum = curriculum.filter(d => !d.lessons.some(l => l.lang === 'python'));
-  return { ROOT, read, curriculum, sqlCurriculum, schemas, LESSON_REFS, SqlEngine, SqlExplain, DialectCheck, INTERVIEW_BANK };
+  return { ROOT, read, curriculum, sqlCurriculum, schemas, LESSON_REFS, SqlEngine, SqlExplain, DialectCheck, INTERVIEW_BANK, PY_INTERVIEW_BANK };
 }
 
 async function initSql() {

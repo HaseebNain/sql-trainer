@@ -659,7 +659,8 @@ function buildQuizPool() {
   const pool = [];
   for (const day of curriculum) {
     for (const l of day.lessons) {
-      if (isPy(l)) continue;           // the quiz checks SQL result sets
+      // Python items are graded by python.js instead of the result-set engine.
+      const py = isPy(l);
       if (completedLessons.has(l.id)) {
         pool.push({ kind: 'lesson', lesson: l, day: dayNo(day), prompt: l.task, tables: l.tables || [] });
       }
@@ -685,7 +686,24 @@ function startQuiz() {
   for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
   quizItems = pool.slice(0, Math.min(QUIZ_SIZE, pool.length));
   quizIndex = 0; quizScore = 0;
+  const firstPy = quizItems.find(q => q.py);
+  if (firstPy) warmPython(firstPy.lesson);      // so the first check doesn't wait for the interpreter
   renderQuizQuestion();
+}
+
+// The quiz answer box is a plain textarea; for Python it needs to behave like
+// an editor where it matters: Tab indents, Enter keeps the indentation.
+function quizKey(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { checkQuizAnswer(); return; }
+  const item = quizItems[quizIndex];
+  if (!item || !item.py) return;
+  const ta = event.target, a = ta.selectionStart, b = ta.selectionEnd;
+  const put = text => { ta.setRangeText(text, a, b, 'end'); event.preventDefault(); };
+  if (event.key === 'Tab' && !event.shiftKey) put('    ');
+  else if (event.key === 'Enter') {
+    const line = ta.value.slice(ta.value.lastIndexOf('\n', a - 1) + 1, a);
+    put('\n' + line.match(/^ */)[0] + (/:\s*$/.test(line) ? '    ' : ''));
+  }
 }
 
 function renderQuizQuestion() {
@@ -696,7 +714,10 @@ function renderQuizQuestion() {
   // Show the schema (columns) for each table in play so it's answerable without
   // leaving the quiz — the modal has no schema panel to click into. Capstone
   // lessons also list the pre-built models they query.
-  const schema = item.tables.concat(lessonModels(item.lesson)).map(t => {
+  const spec = item.ex || item.lesson;
+  const files = item.py ? Object.assign({}, item.lesson.files || {}, spec.files || {}) : {};
+  const fileList = Object.keys(files).map(n => `<details class="iv-file"><summary><span class="quiz-schema-name">${escapeHtml(n)}</span> <span class="quiz-file-note">in the working folder — click to view</span></summary><pre class="py-console file">${escapeHtml(files[n])}</pre></details>`).join('');
+  const schema = item.py ? fileList : item.tables.concat(lessonModels(item.lesson)).map(t => {
     const s = schemas[t];
     const cols = (s ? s.cols.map(c => `<span class="quiz-col" title="${c.type}${c.pk ? ' · primary key' : ''}">${c.name}</span>`)
                     : modelColumns(item.lesson, t).map(c => `<span class="quiz-col">${c}</span>`)).join('');
@@ -712,7 +733,7 @@ function renderQuizQuestion() {
     <div class="quiz-origin">${item.kind === 'lesson' ? 'Lesson' : 'Exercise'} · Day ${item.day} · ${escapeHtml(item.lesson.title)}</div>
     <div class="quiz-prompt">${item.prompt}</div>
     ${schema ? `<div class="quiz-schema">${schema}</div>` : ''}
-    <textarea class="quiz-answer" id="quiz-answer" placeholder="Write your SQL here…" spellcheck="false" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')checkQuizAnswer()"></textarea>
+    <textarea class="quiz-answer${item.py ? ' py' : ''}" id="quiz-answer" placeholder="${item.py ? 'Write your Python here…' : 'Write your SQL here…'}" spellcheck="false" onkeydown="quizKey(event)">${item.py ? escapeHtml(spec.starter || '') : ''}</textarea>
     <div id="quiz-feedback"></div>
     <div class="quiz-actions" id="quiz-actions">
       <button class="btn btn-primary" onclick="checkQuizAnswer()">Check answer</button>
@@ -722,14 +743,36 @@ function renderQuizQuestion() {
   setTimeout(() => { const a = document.getElementById('quiz-answer'); if (a) a.focus(); }, 50);
 }
 
-function checkQuizAnswer() {
-  if (quizSolved) return;
+let quizChecking = false;
+async function checkQuizAnswer() {
+  if (quizSolved || quizChecking) return;
   const ta = document.getElementById('quiz-answer');
-  const sql = ta ? ta.value.trim() : '';
-  if (!sql) return;
   const item = quizItems[quizIndex];
-  let passed = false, errored = false, why = '';
-  try {
+  const sql = ta ? (item.py ? ta.value.replace(/\s+$/, '') : ta.value.trim()) : '';
+  if (!sql.trim()) return;
+  let passed = false, errored = false, why = '', errLabel = 'SQL error', errText = 'That query didn’t run — check the syntax and try again.';
+  if (item.py) {
+    // Graded exactly like the lesson: same tests, same expected output.
+    const at = quizIndex;
+    quizChecking = true;
+    try {
+      if (!PyRunner.ready() || (item.lesson.pkgs || []).length) {
+        const wait = document.getElementById('quiz-feedback');
+        if (wait && !PyRunner.ready()) wait.innerHTML = `<div class="feedback-box feedback-info"><div class="feedback-label">Starting Python…</div>The interpreter loads once per visit — a few seconds.</div>`;
+        await ensurePython(item.lesson);
+      }
+      const g = PyRunner.grade(sql, item.ex || item.lesson, item.lesson);
+      passed = g.verdict === 'pass';
+      if (g.verdict === 'error') {
+        errored = true;
+        errLabel = `${g.error.type}${g.error.line ? ` on line ${g.error.line}` : ''}`;
+        errText = `${escapeHtml(g.error.msg)}${g.error.tip ? `<div class="py-error-tip">${escapeHtml(g.error.tip)}</div>` : ''}`;
+      } else if (!passed) why = formatPyMessage(g.why);
+    } catch (e) {
+      errored = true; errLabel = 'Python could not run'; errText = escapeHtml(String(e && e.message || e));
+    } finally { quizChecking = false; }
+    if (quizItems[quizIndex] !== item || quizIndex !== at || !document.getElementById('quiz-answer')) return;   // moved on while it ran
+  } else try {
     if (item.kind === 'lesson') {
       passed = SqlEngine.evaluate(sql, item.lesson) === 'pass';
       if (!passed) {
@@ -756,7 +799,7 @@ function checkQuizAnswer() {
       `<button class="btn btn-primary" onclick="nextQuizQuestion()">${last ? 'See results →' : 'Next question →'}</button>`;
   } else {
     playSound('error');
-    fb.innerHTML = `<div class="feedback-box feedback-error"><div class="feedback-label">${errored ? 'SQL error' : 'Not quite'}</div>${errored ? 'That query didn’t run — check the syntax and try again.' : (why || 'That doesn’t produce the expected result.') + ' Try again, or take a 💡 hint.'}</div>`;
+    fb.innerHTML = `<div class="feedback-box feedback-error"><div class="feedback-label">${errored ? errLabel : 'Not quite'}</div>${errored ? errText : (why || 'That doesn’t produce the expected result.') + ' Try again, or take a 💡 hint.'}</div>`;
   }
 }
 
@@ -1231,6 +1274,54 @@ function resolveAlias(before, alias) {
   return m ? m[1].toLowerCase() : null;
 }
 
+// ── Python autocomplete ──
+// The Python counterpart of sqlHint: keywords, built-ins and the names already
+// in the editor; after a dot, the common methods of text, lists, dictionaries,
+// sets and files (Python can't know the type without running, so all are offered).
+const PY_KEYWORDS = ['and', 'as', 'break', 'class', 'continue', 'def', 'elif', 'else', 'except', 'False', 'finally', 'for', 'from',
+  'if', 'import', 'in', 'is', 'lambda', 'None', 'not', 'or', 'pass', 'raise', 'return', 'True', 'try', 'while', 'with', 'yield'];
+const PY_BUILTINS = ['abs', 'all', 'any', 'bool', 'dict', 'enumerate', 'float', 'input', 'int', 'isinstance', 'len', 'list', 'map',
+  'max', 'min', 'open', 'print', 'range', 'reversed', 'round', 'set', 'sorted', 'str', 'sum', 'tuple', 'type', 'zip',
+  'ValueError', 'TypeError', 'KeyError', 'IndexError', 'ZeroDivisionError', 'FileNotFoundError', 'Exception'];
+const PY_METHODS = ['append', 'extend', 'insert', 'remove', 'pop', 'sort', 'reverse', 'index', 'count', 'copy', 'clear',
+  'get', 'items', 'keys', 'values', 'update', 'setdefault', 'add', 'discard',
+  'strip', 'lstrip', 'rstrip', 'lower', 'upper', 'title', 'capitalize', 'replace', 'split', 'splitlines', 'join',
+  'startswith', 'endswith', 'find', 'format', 'isdigit', 'isalpha', 'isalnum', 'zfill',
+  'read', 'readlines', 'write', 'close'];
+const PY_MODULE_NAMES = {
+  math: ['sqrt', 'pi', 'ceil', 'floor', 'pow', 'fabs', 'gcd', 'inf'],
+  random: ['random', 'randint', 'choice', 'shuffle', 'seed', 'sample'],
+  statistics: ['mean', 'median', 'mode', 'stdev'],
+  json: ['loads', 'dumps', 'load', 'dump'],
+  csv: ['reader', 'DictReader', 'writer', 'DictWriter'],
+  datetime: ['date', 'datetime', 'timedelta']
+};
+function pyHint(cm) {
+  const cur = cm.getCursor();
+  const line = cm.getLine(cur.line);
+  const tok = cm.getTokenAt(cur);
+  if (tok.type && /comment|string/.test(tok.type)) return null;
+  let start = cur.ch;
+  while (start > 0 && /\w/.test(line.charAt(start - 1))) start--;
+  const prefix = line.slice(start, cur.ch);
+  const lc = prefix.toLowerCase();
+  let words;
+  if (line.charAt(start - 1) === '.') {
+    let o = start - 1;
+    while (o > 0 && /\w/.test(line.charAt(o - 1))) o--;
+    const owner = line.slice(o, start - 1);
+    words = PY_MODULE_NAMES[owner] || PY_METHODS;
+  } else {
+    if (!prefix) return null;
+    // Names the learner has written so far (variables, functions, parameters).
+    const own = (cm.getValue().match(/[A-Za-z_]\w*/g) || []).filter(w => w.length > 1 && w !== prefix);
+    words = [...new Set(own.concat(PY_KEYWORDS, PY_BUILTINS, Object.keys(PY_MODULE_NAMES)))];
+  }
+  const starts = words.filter(w => w.toLowerCase().startsWith(lc) && w !== prefix);
+  const list = starts.slice(0, 12).map(w => ({ text: w, displayText: w }));
+  return list.length ? { list, from: CodeMirror.Pos(cur.line, start), to: cur } : null;
+}
+
 function sqlHint(cm) {
   const cur = cm.getCursor();
   const line = cm.getLine(cur.line);
@@ -1358,7 +1449,7 @@ function initEditor() {
     extraKeys: {
       'Ctrl-Enter': runQuery,
       'Cmd-Enter': runQuery,
-      'Ctrl-Space': cm => { if (!isPy(currentLesson)) CodeMirror.showHint(cm, sqlHint, { completeSingle: false }); },
+      'Ctrl-Space': cm => CodeMirror.showHint(cm, isPy(currentLesson) ? pyHint : sqlHint, { completeSingle: false }),
       // Tab indents with spaces (a real tab character is a TabError waiting to happen in Python).
       'Tab': cm => cm.somethingSelected() ? cm.execCommand('indentMore') : cm.execCommand('insertSoftTab'),
       'Shift-Tab': cm => cm.execCommand('indentLess')
@@ -1366,7 +1457,13 @@ function initEditor() {
   });
   editor.on('change', () => clearPyErrorLine());
   editor.on('inputRead', (cm, event) => {
-    if (isPy(currentLesson)) return;   // SQL autocomplete only
+    if (isPy(currentLesson)) {
+      // Python: suggest once two characters of a name are typed, or after a dot.
+      if (cm.state.completionActive || !event.text[0] || !/[\w.]/.test(event.text[0])) return;
+      const cur = cm.getCursor(), before = cm.getLine(cur.line).slice(0, cur.ch);
+      if (/\.$/.test(before) || /[A-Za-z_]\w+$/.test(before)) CodeMirror.showHint(cm, pyHint, { completeSingle: false });
+      return;
+    }
     // Auto-suggest as you type a word or after a dot; the ranking is handled by
     // sqlHint so the top item matches the current clause.
     if (!cm.state.completionActive && event.text[0] && /[\w.]/.test(event.text[0])) {
@@ -2356,6 +2453,7 @@ async function runPython() {
     const ms = performance.now() - t0;
     if (currentLesson !== lesson || currentExercise !== ex) return;   // moved on while it ran
     queriesRun++;
+    addQueryToHistory(code);
     renderPyOutput(g, ms);
     if (g.verdict === 'error') {
       errorsMade++;
