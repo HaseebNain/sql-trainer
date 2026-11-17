@@ -112,10 +112,7 @@ const ACHIEVEMENTS = [
   { id:"wh-builder",    icon:"🏭", name:"Warehouse Builder",    desc:"Complete Days 35–37 — dimensions, facts and the incremental load.", when:() => [35,36,37].every(dayComplete) },
   { id:"shipped",       icon:"🚢", name:"Shipped It",           desc:"Finish the capstone — the whole plant-floor warehouse (Days 32–39).", when:() => [32,33,34,35,36,37,38,39].every(dayComplete) },
   { id:"py-hello",      icon:"🐍", name:"Hello, Python",        desc:"Complete your first Python lesson.",                  when:() => ALL_DAYS.some(d => d.lessons.some(l => isPy(l) && completedLessons.has(l.id))) },
-  { id:"py-day1",       icon:"🖨️", name:"First Program",        desc:"Python track: complete Day 1 — print, variables, numbers and types.", when:() => dayComplete(101) },
   { id:"py-scratch-half", icon:"🧱", name:"Thinking in Steps",   desc:"Python track: complete Days 1–4 — values, text, decisions and loops.", when:() => [101,102,103,104].every(dayComplete) },
-  { id:"py-collector",  icon:"🧺", name:"Collector",            desc:"Python track: complete Days 5 and 6 — lists, dictionaries, sets and tuples.", when:() => dayComplete(105) && dayComplete(106) },
-  { id:"py-functions",  icon:"🧩", name:"Function Author",      desc:"Python track: complete Day 7 — functions of your own.", when:() => dayComplete(107) },
   { id:"py-scratch-done", icon:"🎒", name:"From Scratch",        desc:"Finish the whole Python track — from print() to a program that reads a file.", when:() => trackComplete('python') },
   { id:"pythonista",    icon:"🧪", name:"Pythonista",           desc:"Complete Days 40–43 — the Python language itself.",   when:() => [40,41,42,43].every(dayComplete) },
   { id:"file-wrangler", icon:"🗂️", name:"File Wrangler",        desc:"Complete Days 44–45 — errors, dates, CSV and JSON.",  when:() => [44,45].every(dayComplete) },
@@ -665,11 +662,11 @@ function buildQuizPool() {
       // Python items are graded by python.js instead of the result-set engine.
       const py = isPy(l);
       if (completedLessons.has(l.id)) {
-        pool.push({ kind: 'lesson', py, lesson: l, day: dayNo(day), prompt: l.task, tables: l.tables || [] });
+        pool.push({ kind: 'lesson', lesson: l, day: dayNo(day), prompt: l.task, tables: l.tables || [] });
       }
       for (const ex of (l.exercises || [])) {
         if (completedExercises.has(ex.id)) {
-          pool.push({ kind: 'exercise', py, lesson: l, ex, day: dayNo(day), prompt: ex.prompt, tables: l.tables || [] });
+          pool.push({ kind: 'exercise', lesson: l, ex, day: dayNo(day), prompt: ex.prompt, tables: l.tables || [] });
         }
       }
     }
@@ -1765,7 +1762,7 @@ function openToday() {
     </div>`;
 
   const iv = typeof Interview !== 'undefined' ? Interview.stats() : { count: 0, best: 0 };
-  const interviewCard = `<div class="today-card">
+  const interviewCard = activeTrack === 'python' ? '' : `<div class="today-card">
       <div class="today-card-kicker"><span>Mock interview</span><span>${iv.count ? `best ${iv.best}/100` : 'not tried yet'}</span></div>
       <div class="today-card-text">${iv.count ? `${iv.count} done. Fifteen minutes is enough for two problems and their follow-ups.` : 'Two timed problems, follow-up questions and a scorecard in fifteen minutes.'}</div>
       <button class="btn btn-ghost" onclick="closeModal(); openInterview()">Start an interview</button>

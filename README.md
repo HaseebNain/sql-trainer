@@ -21,20 +21,7 @@ The **SQL / Python** switch next to the logo chooses which course you are in. Ev
 
 The Python track's days: first programs (print, variables, numbers, types) → text (f-strings, string methods, slicing) → decisions (`if` / `elif` / `else`, `and` / `or` / `not`) → loops (`for`, `while`, accumulators) → lists → dictionaries, sets and tuples → functions → errors, `import`, files and a final project.
 
-Each track remembers the lesson you left it on, so you can switch back and forth freely. XP, level, streak and achievements are shared between them.
-
-Everything the SQL track has, the Python track has too:
-
-| Feature | On the Python track |
-|---------|---------------------|
-| **Daily challenge** | Drawn from the Python lessons and exercises, double XP. |
-| **Quiz** | Five questions from the Python lessons you have finished; the answer box starts from the lesson's starting code and is graded by the same tests. |
-| **Mock interview** | 12 Python problems in `interview-bank-python.js` — *Python fundamentals* (FizzBuzz, palindromes, anagrams, run-length encoding, two-sum…) and *Working with data* (word counts, dedupe, group-by, top-N, a log file, a messy CSV). Same room, clock, follow-up questions, solo or AI interviewer, and scorecard. |
-| **Autocomplete** | Keywords, built-ins and your own names as you type; methods after a dot (Ctrl+Space to ask). |
-| **History** | Every Python run is saved alongside your SQL queries. |
-| **Readiness report, course map, Today, achievements, AI tutor** | All follow the switch. |
-
-The one SQL-only feature is the Snowflake / BigQuery **dialect translation** mode, which has no Python equivalent. Lessons on both tracks run on the same real interpreter and are graded the same way (see *How Python answers are validated*).
+Each track remembers the lesson you left it on, so you can switch back and forth freely. XP, level, streak and achievements are shared between them; the quiz and the mock interviews grade SQL, so they appear on the SQL track only. Lessons on both tracks run on the same real interpreter and are graded the same way (see *How Python answers are validated*).
 
 ## The Course
 
@@ -106,7 +93,7 @@ Written for someone who already knows SQL: every idea is introduced next to the 
 - **AI Tutor & interviewer — on a local model if you like** — optional, and not tied to a subscription. Point it at any OpenAI-compatible local server (**Ollama**, **LM Studio**, llama.cpp, Jan) for a free, offline tutor, or at the Anthropic API with your own key. The AI is never asked whether your SQL is correct; the engine decides that.
 - **Course Map** (`Ctrl+K`) — jump to any day; collapsible per-day sidebar with live progress.
 - **Light & dark themes**, keyboard shortcuts (`Ctrl+/` for the list), CSV export of any result set, per-query timing, and a **↺ Reset data** button that rebuilds the practice database after your DDL/DML experiments.
-- **Gamification** — XP with 18 levels (*Row Rookie* → *Two-Language Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 42 achievements 🏆.
+- **Gamification** — XP with 18 levels (*Row Rookie* → *Two-Language Data Engineer*), daily streaks 🔥, combo multipliers, a date-seeded Daily Challenge worth double XP, and 39 achievements 🏆.
 - **Data Engineer Readiness report** 📈 — click your level badge for per-skill progress mapped to real job requirements.
 - **Update check** — the version badge in the top bar checks GitHub for a newer release and, when you're online, tells you how to update (`git pull` or re-download). It's best-effort and fails silently offline; your saved XP/progress survive updates.
 
@@ -131,7 +118,6 @@ A page opened in a browser needs the server's permission to call it (CORS). If t
 | `course-python-data.js` | Days 43–45 — functions, errors, files |
 | `course-python-pipelines.js` | Days 46–48 — sqlite3, the pipeline capstone, pandas |
 | `course-python-scratch.js` | The Python track — Python from scratch, Python Days 1–8 (`track: 'python'`) |
-| `interview-bank-python.js` | Mock-interview problems for the Python track (graded by `python.js`) |
 | `python.js` | Python runtime and grader — starts Pyodide, runs code in a clean namespace and folder, checks output and behaviour |
 | `refs.js` | Authored reference answers for Days 1–28 |
 | `engine.js` | Result-set validator — grades a query by the *results* it produces |
